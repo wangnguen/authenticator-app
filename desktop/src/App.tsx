@@ -1,21 +1,30 @@
-import { useEffect, useState } from "react";
-import { errorMessage } from "@auth/core";
+import { useCallback, useEffect, useState } from "react";
+import { errorMessage, type VaultStatus } from "@auth/core";
 import { api } from "./api";
 import { PasswordScreen } from "./screens/PasswordScreen";
 import { VaultScreen } from "./screens/VaultScreen";
 
-type Screen = "loading" | "setup" | "unlock" | "vault";
-
 export function App() {
-  const [screen, setScreen] = useState<Screen>("loading");
+  const [status, setStatus] = useState<VaultStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    api
-      .status()
-      .then((s) => setScreen(!s.exists ? "setup" : s.unlocked ? "vault" : "unlock"))
-      .catch((e) => setError(errorMessage(e)));
+  const load = useCallback(async () => {
+    try {
+      let next = await api.status();
+      // Vault không mật khẩu: mở khoá luôn (ví dụ sau khi bấm khoá).
+      if (next.exists && !next.unlocked && !next.hasPassword) {
+        await api.unlockVault(null);
+        next = await api.status();
+      }
+      setStatus(next);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
   }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   if (error) {
     return (
@@ -24,21 +33,23 @@ export function App() {
       </main>
     );
   }
-
-  switch (screen) {
-    case "loading":
-      return <main className="page page--center auth-muted">Đang tải...</main>;
-    case "setup":
-    case "unlock":
-      return <PasswordScreen mode={screen} onDone={() => setScreen("vault")} />;
-    case "vault":
-      return (
-        <VaultScreen
-          onLock={async () => {
-            await api.lockVault();
-            setScreen("unlock");
-          }}
-        />
-      );
+  if (!status) {
+    return <main className="page page--center auth-muted">Đang tải...</main>;
   }
+  if (!status.exists) {
+    return <PasswordScreen mode="setup" onDone={load} />;
+  }
+  if (!status.unlocked) {
+    return <PasswordScreen mode="unlock" onDone={load} />;
+  }
+  return (
+    <VaultScreen
+      hasPassword={status.hasPassword}
+      onLock={async () => {
+        await api.lockVault();
+        await load();
+      }}
+      onSecurityChanged={load}
+    />
+  );
 }

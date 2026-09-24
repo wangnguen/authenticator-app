@@ -1,8 +1,6 @@
 import { useState, type FormEvent } from "react";
-import { errorMessage } from "@auth/core";
+import { errorMessage, MIN_PASSWORD_LENGTH } from "@auth/core";
 import { api } from "../api";
-
-const MIN_LENGTH = 8;
 
 interface Props {
   mode: "setup" | "unlock";
@@ -16,26 +14,29 @@ export function PasswordScreen({ mode, onDone }: Props) {
   const [busy, setBusy] = useState(false);
   const isSetup = mode === "setup";
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (isSetup) {
-      if (password.length < MIN_LENGTH) {
-        return setError(`Mật khẩu cần ít nhất ${MIN_LENGTH} ký tự.`);
-      }
-      if (password !== confirm) {
-        return setError("Mật khẩu nhập lại không khớp.");
-      }
-    }
-
+  const run = async (action: () => Promise<void>) => {
     setBusy(true);
     setError(null);
     try {
-      await (isSetup ? api.createVault(password) : api.unlockVault(password));
+      await action();
       onDone();
     } catch (err) {
       setError(errorMessage(err));
       setBusy(false);
     }
+  };
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (isSetup) {
+      if (password.length < MIN_PASSWORD_LENGTH) {
+        return setError(`Mật khẩu cần ít nhất ${MIN_PASSWORD_LENGTH} ký tự.`);
+      }
+      if (password !== confirm) {
+        return setError("Mật khẩu nhập lại không khớp.");
+      }
+    }
+    void run(() => (isSetup ? api.createVault(password) : api.unlockVault(password)));
   };
 
   return (
@@ -44,7 +45,7 @@ export function PasswordScreen({ mode, onDone }: Props) {
         <h1>🔐 Authenticator</h1>
         <p className="auth-muted">
           {isSetup
-            ? "Tạo master password để mã hoá vault. Nếu quên mật khẩu, bạn sẽ không khôi phục được dữ liệu."
+            ? "Đặt master password để bảo vệ vault (tuỳ chọn). Nếu quên mật khẩu, bạn sẽ không khôi phục được dữ liệu."
             : "Nhập master password để mở khoá vault."}
         </p>
         <input
@@ -66,8 +67,26 @@ export function PasswordScreen({ mode, onDone }: Props) {
         )}
         {error && <p className="auth-error">{error}</p>}
         <button className="auth-btn auth-btn--primary" disabled={busy || !password}>
-          {busy ? "Đang xử lý..." : isSetup ? "Tạo vault" : "Mở khoá"}
+          {busy ? "Đang xử lý..." : isSetup ? "Tạo vault có mật khẩu" : "Mở khoá"}
         </button>
+
+        {isSetup && (
+          <>
+            <div className="divider">hoặc</div>
+            <button
+              type="button"
+              className="auth-btn"
+              disabled={busy}
+              onClick={() => void run(() => api.createVault(null))}
+            >
+              Không dùng mật khẩu
+            </button>
+            <p className="auth-muted hint">
+              Vault tự mở khoá khi bạn đăng nhập Windows. Ai dùng được tài khoản Windows của
+              bạn cũng xem được mã. Bạn có thể đặt mật khẩu sau trong ⚙ Bảo mật.
+            </p>
+          </>
+        )}
       </form>
     </main>
   );

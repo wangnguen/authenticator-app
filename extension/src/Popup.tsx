@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { errorMessage, type VaultStatus } from "@auth/core";
+import { describeImport, errorMessage, type VaultStatus } from "@auth/core";
 import { CodeList, SearchBox, useCodes } from "@auth/ui";
 import { native } from "./native";
 import { fillCode, scanQrOnPage } from "./page";
@@ -79,13 +79,13 @@ function Codes() {
     setScanning(true);
     setNotice(null);
     try {
-      const uri = await scanQrOnPage();
-      if (!uri) {
-        setNotice({ kind: "error", text: "Không thấy QR code trên trang." });
+      const uris = await scanQrOnPage();
+      if (uris.length === 0) {
+        setNotice({ kind: "error", text: "Không thấy QR code 2FA trên trang." });
         return;
       }
-      const added = await native.request({ type: "add_uri", uri });
-      setNotice({ kind: "success", text: `Đã thêm ${added.issuer || added.label}.` });
+      const result = await native.request({ type: "add_uri", uri: uris.join("\n") });
+      setNotice({ kind: "success", text: describeImport(result) });
       await refresh();
     } catch (e) {
       setNotice({ kind: "error", text: errorMessage(e) });

@@ -26,6 +26,7 @@ zeroize = "1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 
 [profile.release]
 codegen-units = 1

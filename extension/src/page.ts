@@ -1,4 +1,4 @@
-import { decodeQrFromImage } from "@auth/ui";
+import { decodeQrCodesFromImage, isOtpUri } from "@auth/ui";
 
 async function activeTabId(): Promise<number> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -16,10 +16,10 @@ export async function fillCode(code: string): Promise<boolean> {
   return Boolean(result?.result);
 }
 
-/** Chụp tab hiện tại và đọc QR code otpauth:// trên trang. */
-export async function scanQrOnPage(): Promise<string | null> {
+/** Chụp tab hiện tại và đọc mọi QR code 2FA (otpauth://, otpauth-migration://) trên trang. */
+export async function scanQrOnPage(): Promise<string[]> {
   const screenshot = await chrome.tabs.captureVisibleTab({ format: "png" });
-  return decodeQrFromImage(screenshot);
+  return (await decodeQrCodesFromImage(screenshot)).filter(isOtpUri);
 }
 
 // Hàm này được serialize và chạy trong trang web, nên phải tự chứa mọi thứ nó cần.

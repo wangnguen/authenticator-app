@@ -88,6 +88,32 @@ h3 {
   word-break: break-all;
 }
 
+.panel__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--auth-muted);
+  font-size: 12px;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--auth-border);
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+}
+
 .dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -152,4 +178,110 @@ h3 {
 
 .file-btn {
   text-align: center;
+}
+
+/* Ô nhập link: dán ảnh QR thì phủ lớp loading trong lúc đọc. */
+.paste-box {
+  position: relative;
+}
+
+.paste-box textarea {
+  resize: vertical;
+}
+
+.paste-box__loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: var(--auth-radius);
+  background: rgb(15 17 21 / 85%);
+  color: var(--auth-text);
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--auth-border);
+  border-top-color: var(--auth-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Popup xem trước tài khoản đọc được từ ảnh QR. */
+.dialog-backdrop--top {
+  z-index: 10;
+}
+
+.preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.preview-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--auth-border);
+  border-radius: var(--auth-radius);
+  background: var(--auth-surface);
+}
+
+.preview-item--duplicate {
+  opacity: 0.55;
+}
+
+.preview-item__name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.preview-item__name span {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-item__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--auth-surface-2);
+  color: var(--auth-muted);
+}
+
+.file-btn--busy {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.dialog--dragging {
+  border-color: var(--auth-accent);
+  border-style: dashed;
 }

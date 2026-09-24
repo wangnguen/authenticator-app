@@ -3,8 +3,10 @@
 
 mod app;
 mod commands;
+mod dpapi;
 mod error;
 mod ipc;
+mod migration;
 mod native_host;
 mod otpauth;
 mod register;

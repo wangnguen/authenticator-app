@@ -1,12 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { CodeEntry, NewAccount, VaultStatus } from "@auth/core";
-
-export interface AccountSummary {
-  id: string;
-  issuer: string;
-  label: string;
-}
+import type {
+  AccountSummary,
+  CodeEntry,
+  ImportPreview,
+  ImportResult,
+  NewAccount,
+  VaultStatus,
+} from "@auth/core";
 
 export interface ExtensionInfo {
   hostName: string;
@@ -18,14 +19,20 @@ export interface ExtensionInfo {
 /** Wrapper cho các Tauri command trong src-tauri/src/commands.rs. */
 export const api = {
   status: () => invoke<VaultStatus>("vault_status"),
-  createVault: (password: string) => invoke<void>("create_vault", { password }),
-  unlockVault: (password: string) => invoke<void>("unlock_vault", { password }),
+  /** `password = null`: vault không mật khẩu, tự mở khoá bằng tài khoản Windows. */
+  createVault: (password: string | null) => invoke<void>("create_vault", { password }),
+  unlockVault: (password: string | null) => invoke<void>("unlock_vault", { password }),
   lockVault: () => invoke<void>("lock_vault"),
+  /** Đặt/đổi mật khẩu, hoặc bỏ mật khẩu khi `newPassword = null`. */
+  setPassword: (currentPassword: string | null, newPassword: string | null) =>
+    invoke<void>("set_password", { currentPassword, newPassword }),
   listCodes: () => invoke<CodeEntry[]>("list_codes"),
   addAccount: (account: NewAccount) =>
     invoke<AccountSummary>("add_account", { account }),
-  addAccountUri: (uri: string) =>
-    invoke<AccountSummary>("add_account_uri", { uri }),
+  /** Nhận otpauth:// hoặc otpauth-migration:// (export Google Authenticator), nhiều link mỗi dòng một link. */
+  importUri: (uri: string) => invoke<ImportResult>("import_uri", { uri }),
+  /** Đọc thử link (giống importUri) nhưng không lưu, để hiện popup xem trước. */
+  previewUri: (uri: string) => invoke<ImportPreview>("preview_uri", { uri }),
   deleteAccount: (id: string) => invoke<void>("delete_account", { id }),
   extensionInfo: () => invoke<ExtensionInfo>("extension_info"),
   /** Extension vừa thêm tài khoản (qua quét QR). */

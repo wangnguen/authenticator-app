@@ -2,7 +2,6 @@
 //! Mỗi request/response là một dòng JSON.
 
 use crate::error::{AppError, AppResult};
-use crate::otpauth;
 use crate::vault::SharedVault;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -57,10 +56,10 @@ fn execute(command: Command, vault: &SharedVault, app: &AppHandle) -> AppResult<
         Command::Status => Ok(serde_json::to_value(vault.status())?),
         Command::ListCodes => Ok(serde_json::to_value(vault.codes()?)?),
         Command::AddUri { uri } => {
-            let summary = vault.add(otpauth::parse(&uri)?)?;
+            let result = vault.import_uri(&uri)?;
             drop(vault);
             let _ = app.emit(VAULT_CHANGED_EVENT, ());
-            Ok(serde_json::to_value(summary)?)
+            Ok(serde_json::to_value(result)?)
         }
     }
 }

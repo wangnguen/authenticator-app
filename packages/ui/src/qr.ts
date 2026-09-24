@@ -1,7 +1,7 @@
-import jsQR from "jsqr";
+import { findQrCodes } from "./qrScan";
 
-/** Đọc QR code từ một ảnh (data URL / blob URL). Trả về null nếu không thấy. */
-export async function decodeQrFromImage(src: string): Promise<string | null> {
+/** Đọc mọi QR code trong một ảnh (data URL / blob URL). */
+export async function decodeQrCodesFromImage(src: string): Promise<string[]> {
   const img = new Image();
   img.src = src;
   await img.decode();
@@ -10,18 +10,43 @@ export async function decodeQrFromImage(src: string): Promise<string | null> {
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  if (!ctx) return null;
+  if (!ctx) return [];
   ctx.drawImage(img, 0, 0);
-
-  const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  return jsQR(data, width, height, { inversionAttempts: "attemptBoth" })?.data ?? null;
+  return findQrCodes(ctx.getImageData(0, 0, canvas.width, canvas.height));
 }
 
-export async function decodeQrFromFile(file: Blob): Promise<string | null> {
+export async function decodeQrCodesFromFile(file: Blob): Promise<string[]> {
   const url = URL.createObjectURL(file);
   try {
-    return await decodeQrFromImage(url);
+    return await decodeQrCodesFromImage(url);
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+export function isOtpUri(text: string): boolean {
+  return /^otpauth(-migration)?:\/\//i.test(text.trim());
+}
+
+export interface QrScanResult {
+  /** Link otpauth:// hoặc otpauth-migration:// đọc được. */
+  uris: string[];
+  /** Số ảnh không có QR nào. */
+  imagesWithoutQr: number;
+  /** Số QR không phải link OTP (ví dụ QR của một trang web). */
+  otherQr: number;
+}
+
+/** Quét nhiều ảnh, gom các link OTP (bỏ trùng). */
+export async function scanOtpQrImages(files: Blob[]): Promise<QrScanResult> {
+  const result: QrScanResult = { uris: [], imagesWithoutQr: 0, otherQr: 0 };
+  for (const file of files) {
+    const codes = await decodeQrCodesFromFile(file);
+    if (codes.length === 0) result.imagesWithoutQr++;
+    for (const code of codes) {
+      if (!isOtpUri(code)) result.otherQr++;
+      else if (!result.uris.includes(code)) result.uris.push(code);
+    }
+  }
+  return result;
 }

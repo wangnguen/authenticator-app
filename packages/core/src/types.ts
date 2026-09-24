@@ -21,10 +21,46 @@ export interface NewAccount {
   period: number;
 }
 
+export interface AccountSummary {
+  id: string;
+  issuer: string;
+  label: string;
+}
+
+/** Kết quả import từ link otpauth:// hoặc otpauth-migration://. */
+export interface ImportResult {
+  added: AccountSummary[];
+  /** Bỏ qua vì đã có trong vault. */
+  duplicates: number;
+  /** Bỏ qua vì chưa hỗ trợ (HOTP, MD5). */
+  unsupported: number;
+}
+
+/** Tài khoản đọc được từ link/QR, hiển thị trước khi bấm "Thêm" (không có secret). */
+export interface AccountPreview {
+  issuer: string;
+  label: string;
+  algorithm: Algorithm;
+  digits: number;
+  period: number;
+  /** Đã có trong vault, sẽ bị bỏ qua. */
+  duplicate: boolean;
+}
+
+export interface ImportPreview {
+  accounts: AccountPreview[];
+  /** Số tài khoản chưa hỗ trợ (HOTP, MD5), sẽ bị bỏ qua. */
+  unsupported: number;
+}
+
 export interface VaultStatus {
   exists: boolean;
   unlocked: boolean;
+  /** false: vault không có master password, tự mở khoá bằng tài khoản Windows. */
+  hasPassword: boolean;
 }
+
+export const MIN_PASSWORD_LENGTH = 8;
 
 export interface AppError {
   code: ErrorCode;

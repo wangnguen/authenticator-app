@@ -1,4 +1,4 @@
-import type { AppError, CodeEntry, VaultStatus } from "./types";
+import type { AppError, CodeEntry, ImportResult, VaultStatus } from "./types";
 
 /** Tên native messaging host, phải khớp với desktop/src-tauri/src/register.rs. */
 export const NATIVE_HOST_NAME = "com.authenticator.app";
@@ -16,7 +16,7 @@ export interface NativeResultMap {
   ping: { version: string };
   status: VaultStatus;
   list_codes: CodeEntry[];
-  add_uri: { issuer: string; label: string };
+  add_uri: ImportResult;
 }
 
 export type NativeResponse<T = unknown> =

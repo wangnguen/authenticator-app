@@ -15,7 +15,12 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
 
-            let vault: SharedVault = Arc::new(Mutex::new(Vault::new(data_dir.join("vault.json"))));
+            let mut vault = Vault::new(data_dir.join("vault.json"));
+            // Vault không mật khẩu thì mở luôn để extension dùng được ngay.
+            if let Err(e) = vault.auto_unlock() {
+                eprintln!("Không tự mở khoá được vault: {e}");
+            }
+            let vault: SharedVault = Arc::new(Mutex::new(vault));
             app.manage(vault.clone());
             app.manage(register::register(&data_dir));
 
@@ -32,9 +37,11 @@ pub fn run() {
             commands::create_vault,
             commands::unlock_vault,
             commands::lock_vault,
+            commands::set_password,
             commands::list_codes,
             commands::add_account,
-            commands::add_account_uri,
+            commands::preview_uri,
+            commands::import_uri,
             commands::delete_account,
             commands::extension_info,
         ])

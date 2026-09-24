@@ -1,7 +1,11 @@
-//! Vault mã hoá: key = Argon2id(master password, salt), dữ liệu = AES-256-GCM.
+//! Vault mã hoá AES-256-GCM. Key lấy từ một trong hai nguồn:
+//! - có master password: key = Argon2id(password, salt)
+//! - không có mật khẩu: key ngẫu nhiên, được Windows DPAPI khoá theo tài khoản Windows
 //! Key chỉ nằm trong RAM khi vault đang mở và được xoá (zeroize) khi khoá.
 
+use crate::dpapi;
 use crate::error::{AppError, AppResult};
+use crate::otpauth;
 use crate::totp::{self, Algorithm};
 use aes_gcm::aead::rand_core::RngCore;
 use aes_gcm::aead::{Aead, KeyInit, OsRng, Payload};
@@ -87,10 +91,43 @@ pub struct AccountSummary {
     pub label: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    pub added: Vec<AccountSummary>,
+    /// Số tài khoản bỏ qua vì đã có trong vault.
+    pub duplicates: usize,
+    /// Số tài khoản bỏ qua vì chưa hỗ trợ (HOTP, MD5).
+    pub unsupported: usize,
+}
+
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountPreview {
+    pub issuer: String,
+    pub label: String,
+    pub algorithm: Algorithm,
+    pub digits: u32,
+    pub period: u64,
+    /// Đã có trong vault (hoặc lặp lại trong cùng lần import), sẽ bị bỏ qua.
+    pub duplicate: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreview {
+    pub accounts: Vec<AccountPreview>,
+    /// Số tài khoản chưa hỗ trợ (HOTP, MD5), sẽ bị bỏ qua.
+    pub unsupported: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VaultStatus {
     pub exists: bool,
     pub unlocked: bool,
+    /// false: vault không có master password, key được Windows (DPAPI) giữ.
+    pub has_password: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,17 +164,81 @@ impl KdfParams {
     }
 }
 
+/// Cách bảo vệ key của vault.
+#[derive(Clone)]
+enum Protection {
+    /// key = Argon2id(master password).
+    Password(KdfParams),
+    /// key ngẫu nhiên, được DPAPI khoá theo tài khoản Windows (base64 của blob DPAPI).
+    Device(String),
+}
+
+impl Protection {
+    /// Tạo key mới: có mật khẩu thì dùng Argon2id, không có thì dùng DPAPI.
+    fn generate(password: Option<&str>) -> AppResult<(Zeroizing<[u8; 32]>, Self)> {
+        match password {
+            Some(password) => {
+                check_password(password)?;
+                let kdf = KdfParams::generate();
+                Ok((kdf.derive_key(password)?, Self::Password(kdf)))
+            }
+            None => {
+                let mut key = Zeroizing::new([0u8; 32]);
+                OsRng.fill_bytes(key.as_mut_slice());
+                let wrapped = dpapi::protect(key.as_slice()).map_err(AppError::internal)?;
+                Ok((key, Self::Device(BASE64.encode(&wrapped))))
+            }
+        }
+    }
+
+    fn key(&self, password: Option<&str>) -> AppResult<Zeroizing<[u8; 32]>> {
+        match self {
+            Self::Password(kdf) => kdf.derive_key(password.ok_or_else(AppError::locked)?),
+            Self::Device(wrapped) => {
+                let blob = BASE64.decode(wrapped.as_bytes()).map_err(AppError::internal)?;
+                let raw = dpapi::unprotect(&blob).map_err(|_| {
+                    AppError::new(
+                        "DEVICE_KEY",
+                        "Không mở được vault bằng tài khoản Windows này (vault được tạo trên máy hoặc user khác).",
+                    )
+                })?;
+                let key: [u8; 32] = raw
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| AppError::internal("Key trong vault không hợp lệ."))?;
+                Ok(Zeroizing::new(key))
+            }
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct VaultFile {
     version: u32,
-    kdf: KdfParams,
+    /// Có khi vault dùng master password.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kdf: Option<KdfParams>,
+    /// Có khi vault không dùng mật khẩu (key được DPAPI khoá).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    device_key: Option<String>,
     nonce: String,
     ciphertext: String,
 }
 
+impl VaultFile {
+    fn protection(&self) -> AppResult<Protection> {
+        match (&self.kdf, &self.device_key) {
+            (Some(kdf), _) => Ok(Protection::Password(kdf.clone())),
+            (None, Some(wrapped)) => Ok(Protection::Device(wrapped.clone())),
+            (None, None) => Err(AppError::internal("File vault thiếu thông tin key.")),
+        }
+    }
+}
+
 struct Unlocked {
     key: Zeroizing<[u8; 32]>,
-    kdf: KdfParams,
+    protection: Protection,
     accounts: Vec<Account>,
 }
 
@@ -155,44 +256,45 @@ impl Vault {
     }
 
     pub fn status(&self) -> VaultStatus {
+        let has_password = match &self.unlocked {
+            Some(unlocked) => matches!(unlocked.protection, Protection::Password(_)),
+            None => self.read_file().map(|f| f.kdf.is_some()).unwrap_or(false),
+        };
         VaultStatus {
             exists: self.path.exists(),
             unlocked: self.unlocked.is_some(),
+            has_password,
         }
     }
 
-    pub fn create(&mut self, password: &str) -> AppResult<()> {
+    /// `password = None`: vault không có mật khẩu, tự mở khoá bằng tài khoản Windows.
+    pub fn create(&mut self, password: Option<&str>) -> AppResult<()> {
         if self.path.exists() {
             return Err(AppError::vault_exists());
         }
-        if password.chars().count() < MIN_PASSWORD_LEN {
-            return Err(AppError::new(
-                "WEAK_PASSWORD",
-                format!("Mật khẩu cần ít nhất {MIN_PASSWORD_LEN} ký tự."),
-            ));
-        }
-        let kdf = KdfParams::generate();
-        let key = kdf.derive_key(password)?;
+        let (key, protection) = Protection::generate(password)?;
         self.unlocked = Some(Unlocked {
             key,
-            kdf,
+            protection,
             accounts: Vec::new(),
         });
         self.save()
     }
 
-    pub fn unlock(&mut self, password: &str) -> AppResult<()> {
+    /// Mở khoá vault. Vault không có mật khẩu thì bỏ qua `password`.
+    pub fn unlock(&mut self, password: Option<&str>) -> AppResult<()> {
         if !self.path.exists() {
             return Err(AppError::no_vault());
         }
-        let file: VaultFile = serde_json::from_slice(&fs::read(&self.path)?)?;
+        let file = self.read_file()?;
         if file.version != FILE_VERSION {
             return Err(AppError::internal(format!(
                 "Phiên bản vault không hỗ trợ: {}",
                 file.version
             )));
         }
-        let key = file.kdf.derive_key(password)?;
+        let protection = file.protection()?;
+        let key = protection.key(password)?;
         let nonce = BASE64.decode(file.nonce.as_bytes()).map_err(AppError::internal)?;
         let ciphertext = BASE64
             .decode(file.ciphertext.as_bytes())
@@ -217,14 +319,43 @@ impl Vault {
 
         self.unlocked = Some(Unlocked {
             key,
-            kdf: file.kdf,
+            protection,
             accounts,
         });
         Ok(())
     }
 
+    /// Gọi lúc app khởi động: tự mở vault nếu vault không dùng mật khẩu.
+    pub fn auto_unlock(&mut self) -> AppResult<()> {
+        let status = self.status();
+        if status.exists && !status.unlocked && !status.has_password {
+            self.unlock(None)?;
+        }
+        Ok(())
+    }
+
+    /// Đặt, đổi hoặc bỏ master password (`new = None` là bỏ mật khẩu).
+    /// Nếu vault đang có mật khẩu thì phải nhập đúng mật khẩu hiện tại.
+    pub fn set_password(&mut self, current: Option<&str>, new: Option<&str>) -> AppResult<()> {
+        let unlocked = self.unlocked_mut()?;
+        if let Protection::Password(kdf) = &unlocked.protection {
+            let current = current.ok_or_else(AppError::wrong_password)?;
+            if kdf.derive_key(current)?.as_slice() != unlocked.key.as_slice() {
+                return Err(AppError::wrong_password());
+            }
+        }
+        let (key, protection) = Protection::generate(new)?;
+        unlocked.key = key;
+        unlocked.protection = protection;
+        self.save()
+    }
+
     pub fn lock(&mut self) {
         self.unlocked = None;
+    }
+
+    fn read_file(&self) -> AppResult<VaultFile> {
+        Ok(serde_json::from_slice(&fs::read(&self.path)?)?)
     }
 
     fn unlocked(&self) -> AppResult<&Unlocked> {
@@ -265,41 +396,81 @@ impl Vault {
     }
 
     pub fn add(&mut self, new: NewAccount) -> AppResult<AccountSummary> {
-        let secret = normalize_secret(&new.secret)?;
-        let issuer = new.issuer.trim().to_string();
-        let label = new.label.trim().to_string();
-        if issuer.is_empty() && label.is_empty() {
-            return Err(AppError::invalid_account("Cần nhập tên dịch vụ hoặc tài khoản."));
-        }
-        if !(6..=8).contains(&new.digits) {
-            return Err(AppError::invalid_account("Số chữ số phải từ 6 đến 8."));
-        }
-        if !(1..=300).contains(&new.period) {
-            return Err(AppError::invalid_account("Chu kỳ phải từ 1 đến 300 giây."));
-        }
+        self.import(vec![new])?
+            .added
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::invalid_account("Tài khoản này đã tồn tại."))
+    }
+
+    /// Thêm nhiều tài khoản cùng lúc, bỏ qua tài khoản trùng secret. Chỉ ghi file một lần.
+    pub fn import(&mut self, accounts: Vec<NewAccount>) -> AppResult<ImportResult> {
+        self.unlocked()?;
+        let accounts = accounts
+            .into_iter()
+            .map(build_account)
+            .collect::<AppResult<Vec<_>>>()?;
 
         let unlocked = self.unlocked_mut()?;
-        if unlocked.accounts.iter().any(|a| a.secret == secret) {
-            return Err(AppError::invalid_account("Tài khoản này đã tồn tại."));
+        let mut result = ImportResult::default();
+        for account in accounts {
+            if unlocked.accounts.iter().any(|a| a.secret == account.secret) {
+                result.duplicates += 1;
+                continue;
+            }
+            result.added.push(AccountSummary {
+                id: account.id.clone(),
+                issuer: account.issuer.clone(),
+                label: account.label.clone(),
+            });
+            unlocked.accounts.push(account);
         }
-        let account = Account {
-            id: uuid::Uuid::new_v4().to_string(),
-            issuer,
-            label,
-            secret,
-            algorithm: new.algorithm,
-            digits: new.digits,
-            period: new.period,
-            created_at: now_ms(),
-        };
-        let summary = AccountSummary {
-            id: account.id.clone(),
-            issuer: account.issuer.clone(),
-            label: account.label.clone(),
-        };
-        unlocked.accounts.push(account);
-        self.save()?;
-        Ok(summary)
+        if !result.added.is_empty() {
+            self.save()?;
+        }
+        Ok(result)
+    }
+
+    /// Xem trước các tài khoản sẽ được import (không lưu, không trả secret).
+    pub fn preview_uri(&self, input: &str) -> AppResult<ImportPreview> {
+        let existing = &self.unlocked()?.accounts;
+        let parsed = otpauth::parse_many(input)?;
+        let mut seen: Vec<String> = Vec::new();
+        let mut accounts = Vec::new();
+        for new in parsed.accounts {
+            let account = build_account(new)?;
+            let duplicate = existing.iter().any(|a| a.secret == account.secret)
+                || seen.contains(&account.secret);
+            seen.push(account.secret.clone());
+            accounts.push(AccountPreview {
+                issuer: account.issuer,
+                label: account.label,
+                algorithm: account.algorithm,
+                digits: account.digits,
+                period: account.period,
+                duplicate,
+            });
+        }
+        Ok(ImportPreview {
+            accounts,
+            unsupported: parsed.unsupported,
+        })
+    }
+
+    /// Import từ `otpauth://` hoặc `otpauth-migration://` (có thể nhiều link, mỗi link một dòng).
+    pub fn import_uri(&mut self, input: &str) -> AppResult<ImportResult> {
+        let parsed = otpauth::parse_many(input)?;
+        if parsed.accounts.is_empty() {
+            return Err(AppError::invalid_uri(
+                "Không có tài khoản TOTP nào để import (HOTP chưa được hỗ trợ).",
+            ));
+        }
+        let mut result = self.import(parsed.accounts)?;
+        result.unsupported = parsed.unsupported;
+        if result.added.is_empty() {
+            return Err(AppError::invalid_account("Tất cả tài khoản đã tồn tại."));
+        }
+        Ok(result)
     }
 
     pub fn remove(&mut self, id: &str) -> AppResult<()> {
@@ -330,9 +501,14 @@ impl Vault {
             )
             .map_err(AppError::internal)?;
 
+        let (kdf, device_key) = match &unlocked.protection {
+            Protection::Password(kdf) => (Some(kdf.clone()), None),
+            Protection::Device(wrapped) => (None, Some(wrapped.clone())),
+        };
         let file = VaultFile {
             version: FILE_VERSION,
-            kdf: unlocked.kdf.clone(),
+            kdf,
+            device_key,
             nonce: BASE64.encode(&nonce),
             ciphertext: BASE64.encode(&ciphertext),
         };
@@ -346,6 +522,41 @@ impl Vault {
         fs::rename(&tmp, &self.path)?;
         Ok(())
     }
+}
+
+fn check_password(password: &str) -> AppResult<()> {
+    if password.chars().count() < MIN_PASSWORD_LEN {
+        return Err(AppError::new(
+            "WEAK_PASSWORD",
+            format!("Mật khẩu cần ít nhất {MIN_PASSWORD_LEN} ký tự."),
+        ));
+    }
+    Ok(())
+}
+
+fn build_account(new: NewAccount) -> AppResult<Account> {
+    let secret = normalize_secret(&new.secret)?;
+    let issuer = new.issuer.trim().to_string();
+    let label = new.label.trim().to_string();
+    if issuer.is_empty() && label.is_empty() {
+        return Err(AppError::invalid_account("Cần nhập tên dịch vụ hoặc tài khoản."));
+    }
+    if !(6..=8).contains(&new.digits) {
+        return Err(AppError::invalid_account("Số chữ số phải từ 6 đến 8."));
+    }
+    if !(1..=300).contains(&new.period) {
+        return Err(AppError::invalid_account("Chu kỳ phải từ 1 đến 300 giây."));
+    }
+    Ok(Account {
+        id: uuid::Uuid::new_v4().to_string(),
+        issuer,
+        label,
+        secret,
+        algorithm: new.algorithm,
+        digits: new.digits,
+        period: new.period,
+        created_at: now_ms(),
+    })
 }
 
 fn normalize_secret(secret: &str) -> AppResult<String> {
@@ -393,13 +604,13 @@ mod tests {
     #[test]
     fn create_add_lock_unlock_roundtrip() {
         let mut vault = temp_vault();
-        vault.create("correct horse").unwrap();
+        vault.create(Some("correct horse")).unwrap();
         vault.add(sample()).unwrap();
         vault.lock();
         assert!(matches!(vault.codes(), Err(e) if e.code == "LOCKED"));
 
-        assert_eq!(vault.unlock("wrong password").unwrap_err().code, "WRONG_PASSWORD");
-        vault.unlock("correct horse").unwrap();
+        assert_eq!(vault.unlock(Some("wrong password")).unwrap_err().code, "WRONG_PASSWORD");
+        vault.unlock(Some("correct horse")).unwrap();
         let codes = vault.codes().unwrap();
         assert_eq!(codes.len(), 1);
         assert_eq!(codes[0].issuer, "GitHub");
@@ -413,7 +624,7 @@ mod tests {
     #[test]
     fn rejects_duplicates_and_bad_secrets() {
         let mut vault = temp_vault();
-        vault.create("correct horse").unwrap();
+        vault.create(Some("correct horse")).unwrap();
         vault.add(sample()).unwrap();
         assert_eq!(vault.add(sample()).unwrap_err().code, "INVALID_ACCOUNT");
 
@@ -426,8 +637,97 @@ mod tests {
     }
 
     #[test]
+    fn import_uri_skips_duplicates() {
+        let mut vault = temp_vault();
+        vault.create(Some("correct horse")).unwrap();
+        let input = "otpauth://totp/a?secret=JBSWY3DPEHPK3PXP\notpauth://totp/b?secret=GEZDGNBVGY3TQOJQ";
+
+        let result = vault.import_uri(input).unwrap();
+        assert_eq!(result.added.len(), 2);
+        assert_eq!(result.duplicates, 0);
+        assert_eq!(vault.import_uri(input).unwrap_err().code, "INVALID_ACCOUNT");
+
+        let result = vault
+            .import_uri("otpauth://totp/a?secret=JBSWY3DPEHPK3PXP otpauth://totp/c?secret=MFRGGZDFMZTWQ2LK")
+            .unwrap();
+        assert_eq!(result.added.len(), 1);
+        assert_eq!(result.added[0].label, "c");
+        assert_eq!(result.duplicates, 1);
+        assert_eq!(vault.codes().unwrap().len(), 3);
+        let _ = fs::remove_dir_all(vault.path.parent().unwrap());
+    }
+
+    #[test]
     fn rejects_short_password() {
         let mut vault = temp_vault();
-        assert_eq!(vault.create("short").unwrap_err().code, "WEAK_PASSWORD");
+        assert_eq!(vault.create(Some("short")).unwrap_err().code, "WEAK_PASSWORD");
+    }
+
+    #[test]
+    fn preview_marks_duplicates_without_saving() {
+        let mut vault = temp_vault();
+        vault.create(Some("correct horse")).unwrap();
+        vault.import_uri("otpauth://totp/GitHub:a?secret=JBSWY3DPEHPK3PXP&issuer=GitHub").unwrap();
+
+        let preview = vault
+            .preview_uri(
+                "otpauth://totp/GitHub:a?secret=JBSWY3DPEHPK3PXP&issuer=GitHub\n\
+                 otpauth://totp/b?secret=GEZDGNBVGY3TQOJQ&digits=8\n\
+                 otpauth://totp/b-again?secret=GEZDGNBVGY3TQOJQ",
+            )
+            .unwrap();
+        let summary: Vec<_> = preview
+            .accounts
+            .iter()
+            .map(|a| (a.label.as_str(), a.digits, a.duplicate))
+            .collect();
+        assert_eq!(summary, [("a", 6, true), ("b", 8, false), ("b-again", 6, true)]);
+        assert_eq!(vault.codes().unwrap().len(), 1, "preview không được lưu");
+        let _ = fs::remove_dir_all(vault.path.parent().unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn passwordless_vault_auto_unlocks() {
+        let mut vault = temp_vault();
+        vault.create(None).unwrap();
+        vault.add(sample()).unwrap();
+        assert!(!vault.status().has_password);
+
+        // Mở lại như lúc khởi động app: không cần mật khẩu.
+        let mut reopened = Vault::new(vault.path.clone());
+        let status = reopened.status();
+        assert!(status.exists && !status.unlocked && !status.has_password);
+        reopened.auto_unlock().unwrap();
+        assert_eq!(reopened.codes().unwrap().len(), 1);
+        let _ = fs::remove_dir_all(vault.path.parent().unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn set_and_remove_password() {
+        let mut vault = temp_vault();
+        vault.create(None).unwrap();
+        vault.add(sample()).unwrap();
+
+        // Không mật khẩu -> đặt mật khẩu: không cần mật khẩu cũ.
+        vault.set_password(None, Some("correct horse")).unwrap();
+        let mut reopened = Vault::new(vault.path.clone());
+        assert!(reopened.status().has_password);
+        reopened.auto_unlock().unwrap();
+        assert!(!reopened.status().unlocked);
+        reopened.unlock(Some("correct horse")).unwrap();
+
+        // Đổi mật khẩu: phải đúng mật khẩu hiện tại.
+        let err = reopened.set_password(Some("wrong password"), Some("battery staple")).unwrap_err();
+        assert_eq!(err.code, "WRONG_PASSWORD");
+        reopened.set_password(Some("correct horse"), Some("battery staple")).unwrap();
+
+        // Bỏ mật khẩu.
+        reopened.set_password(Some("battery staple"), None).unwrap();
+        let mut last = Vault::new(vault.path.clone());
+        last.auto_unlock().unwrap();
+        assert_eq!(last.codes().unwrap().len(), 1);
+        let _ = fs::remove_dir_all(vault.path.parent().unwrap());
     }
 }

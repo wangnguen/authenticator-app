@@ -3,4 +3,10 @@ export { CodeList } from "./CodeList";
 export { CountdownRing } from "./CountdownRing";
 export { SearchBox } from "./SearchBox";
 export { useCodes } from "./useCodes";
-export { decodeQrFromFile, decodeQrFromImage } from "./qr";
+export {
+  decodeQrCodesFromFile,
+  decodeQrCodesFromImage,
+  isOtpUri,
+  scanOtpQrImages,
+  type QrScanResult,
+} from "./qr";

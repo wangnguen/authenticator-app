@@ -2,17 +2,51 @@
 //! (định dạng Key URI của Google Authenticator).
 
 use crate::error::{AppError, AppResult};
+use crate::migration::{self, Parsed};
 use crate::totp::Algorithm;
 use crate::vault::NewAccount;
 use percent_encoding::percent_decode_str;
 use url::Url;
 
-pub fn parse(uri: &str) -> AppResult<NewAccount> {
-    let url = Url::parse(uri.trim()).map_err(|_| AppError::invalid_uri("Link không hợp lệ."))?;
+/// Nhận một hoặc nhiều link (cách nhau bởi khoảng trắng/xuống dòng), mỗi link là
+/// `otpauth://` hoặc `otpauth-migration://` (export từ Google Authenticator).
+pub fn parse_many(input: &str) -> AppResult<Parsed> {
+    let mut parsed = Parsed {
+        accounts: Vec::new(),
+        unsupported: 0,
+    };
+    for uri in input.split_whitespace() {
+        let url = Url::parse(uri).map_err(|_| AppError::invalid_uri("Link không hợp lệ."))?;
+        match url.scheme() {
+            "otpauth" => parsed.accounts.push(parse_url(&url)?),
+            "otpauth-migration" => {
+                let batch = migration::parse(&url)?;
+                parsed.accounts.extend(batch.accounts);
+                parsed.unsupported += batch.unsupported;
+            }
+            _ => {
+                return Err(AppError::invalid_uri(
+                    "Link phải bắt đầu bằng otpauth:// hoặc otpauth-migration://",
+                ))
+            }
+        }
+    }
+    if parsed.accounts.is_empty() && parsed.unsupported == 0 {
+        return Err(AppError::invalid_uri("Chưa nhập link."));
+    }
+    Ok(parsed)
+}
 
+#[cfg(test)]
+fn parse(uri: &str) -> AppResult<NewAccount> {
+    let url = Url::parse(uri.trim()).map_err(|_| AppError::invalid_uri("Link không hợp lệ."))?;
     if url.scheme() != "otpauth" {
         return Err(AppError::invalid_uri("Link phải bắt đầu bằng otpauth://"));
     }
+    parse_url(&url)
+}
+
+fn parse_url(url: &Url) -> AppResult<NewAccount> {
     match url.host_str() {
         Some("totp") => {}
         Some("hotp") => return Err(AppError::invalid_uri("Chưa hỗ trợ HOTP.")),
@@ -87,6 +121,18 @@ mod tests {
         assert_eq!(account.algorithm, Algorithm::Sha1);
         assert_eq!(account.digits, 6);
         assert_eq!(account.period, 30);
+    }
+
+    #[test]
+    fn parses_multiple_lines() {
+        let parsed = parse_many(
+            "otpauth://totp/a?secret=JBSWY3DPEHPK3PXP\n  otpauth://totp/b?secret=GEZDGNBVGY3TQOJQ\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.accounts.len(), 2);
+        assert_eq!(parsed.accounts[1].label, "b");
+        assert!(parse_many("   ").is_err());
+        assert!(parse_many("https://example.com").is_err());
     }
 
     #[test]

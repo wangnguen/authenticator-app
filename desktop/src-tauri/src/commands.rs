@@ -1,9 +1,11 @@
 //! Tauri commands gọi từ frontend React qua `invoke()`.
 
 use crate::error::{AppError, AppResult};
-use crate::otpauth;
 use crate::register::ExtensionInfo;
-use crate::vault::{AccountSummary, CodeEntry, NewAccount, SharedVault, Vault, VaultStatus};
+use crate::vault::{
+    AccountSummary, CodeEntry, ImportPreview, ImportResult, NewAccount, SharedVault, Vault,
+    VaultStatus,
+};
 use tauri::State;
 
 fn with_vault<T>(vault: &SharedVault, f: impl FnOnce(&mut Vault) -> AppResult<T>) -> AppResult<T> {
@@ -28,14 +30,28 @@ pub fn vault_status(vault: State<'_, SharedVault>) -> AppResult<VaultStatus> {
     with_vault(&vault, |v| Ok(v.status()))
 }
 
+/// `password = null`: tạo vault không mật khẩu (tự mở khoá bằng tài khoản Windows).
 #[tauri::command]
-pub async fn create_vault(vault: State<'_, SharedVault>, password: String) -> AppResult<()> {
-    with_vault_blocking(vault.inner().clone(), move |v| v.create(&password)).await
+pub async fn create_vault(vault: State<'_, SharedVault>, password: Option<String>) -> AppResult<()> {
+    with_vault_blocking(vault.inner().clone(), move |v| v.create(password.as_deref())).await
 }
 
 #[tauri::command]
-pub async fn unlock_vault(vault: State<'_, SharedVault>, password: String) -> AppResult<()> {
-    with_vault_blocking(vault.inner().clone(), move |v| v.unlock(&password)).await
+pub async fn unlock_vault(vault: State<'_, SharedVault>, password: Option<String>) -> AppResult<()> {
+    with_vault_blocking(vault.inner().clone(), move |v| v.unlock(password.as_deref())).await
+}
+
+/// Đặt, đổi hoặc bỏ master password (`newPassword = null` là bỏ).
+#[tauri::command]
+pub async fn set_password(
+    vault: State<'_, SharedVault>,
+    current_password: Option<String>,
+    new_password: Option<String>,
+) -> AppResult<()> {
+    with_vault_blocking(vault.inner().clone(), move |v| {
+        v.set_password(current_password.as_deref(), new_password.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -56,9 +72,15 @@ pub fn add_account(vault: State<'_, SharedVault>, account: NewAccount) -> AppRes
     with_vault(&vault, |v| v.add(account))
 }
 
+/// Xem trước tài khoản đọc được từ link/QR trước khi bấm "Thêm".
 #[tauri::command]
-pub fn add_account_uri(vault: State<'_, SharedVault>, uri: String) -> AppResult<AccountSummary> {
-    with_vault(&vault, |v| v.add(otpauth::parse(&uri)?))
+pub fn preview_uri(vault: State<'_, SharedVault>, uri: String) -> AppResult<ImportPreview> {
+    with_vault(&vault, |v| v.preview_uri(&uri))
+}
+
+#[tauri::command]
+pub fn import_uri(vault: State<'_, SharedVault>, uri: String) -> AppResult<ImportResult> {
+    with_vault(&vault, |v| v.import_uri(&uri))
 }
 
 #[tauri::command]
