@@ -1,0 +1,15 @@
+{
+  "name": "authenticator-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:desktop": "pnpm --filter desktop tauri dev",
+    "build:desktop": "pnpm --filter desktop tauri build",
+    "dev:extension": "pnpm --filter extension dev",
+    "build:extension": "pnpm --filter extension build",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

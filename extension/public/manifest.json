@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Authenticator",
+  "version": "0.1.0",
+  "description": "Lấy mã 2FA từ app Authenticator trên máy tính.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvm9sTV/kyey+RVk6uI+8yLKEg6fmBLSF8nrK13nvPSLo87gZupPYGJ+nA3tiVdalP1yevffzsXNsVTuPi897cZj2mLCvLRWkN9nvyNNNA22HFYt9zEerVfP48pjgcfcKevlfV2ulioBymU/B28+gDxJ/SbTmY3mWUa410N1woFzOUsGnFhw6iaVA+qwUiIK17DlYk8FBBSwLIr0fIy7m4nCZZlT01jAIf28KkvmBgZDhJSxicS3DLJy/8k5HOvllJbpnYpatKvgrYf8yLqpR99vSpSkWYt52rRSibi7zGCE6hQQSNKkaTyZBG8EHB/+nTFo8BKVg37RCjeTIDq5h4QIDAQAB",
+  "minimum_chrome_version": "116",
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16x16.png",
+      "32": "icons/32x32.png",
+      "48": "icons/48x48.png",
+      "128": "icons/128x128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16x16.png",
+    "32": "icons/32x32.png",
+    "48": "icons/48x48.png",
+    "128": "icons/128x128.png"
+  },
+  "permissions": ["nativeMessaging", "activeTab", "scripting"]
+}

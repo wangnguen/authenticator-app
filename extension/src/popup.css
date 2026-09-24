@@ -1,0 +1,38 @@
+body {
+  width: 360px;
+}
+
+.popup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.popup__header h1 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.popup__toolbar {
+  display: flex;
+  gap: 6px;
+}
+
+.popup__list {
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.popup__message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0;
+  text-align: center;
+}
+
+.popup__message p {
+  margin: 0;
+}
