@@ -200,15 +200,33 @@ jobs:
           manifest=extension/public/manifest.json
           jq --arg v "$VERSION" '.version = $v' "$manifest" > "$manifest.tmp" && mv "$manifest.tmp" "$manifest"
       - run: pnpm build:extension
-      - name: Đóng gói và upload
+      - name: Đóng gói
         # Không đặt tên biến là ZIP: lệnh zip đọc biến môi trường ZIP làm tuỳ chọn mặc định.
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.create-release.outputs.tag }}
           ASSET: authenticator-extension-${{ needs.create-release.outputs.version }}.zip
-        run: |
-          (cd extension/dist && zip -r "$GITHUB_WORKSPACE/$ASSET" .)
-          gh release upload "$TAG" "$ASSET" --clobber
+        run: (cd extension/dist && zip -r "$GITHUB_WORKSPACE/$ASSET" .)
+      # Release đang là bản nháp nên chưa có tag, phải upload theo ID (gh release upload tìm theo tag).
+      - name: Upload lên release
+        uses: actions/github-script@v7
+        env:
+          ASSET: authenticator-extension-${{ needs.create-release.outputs.version }}.zip
+          RELEASE_ID: ${{ needs.create-release.outputs.release-id }}
+        with:
+          script: |
+            const fs = require("fs");
+            const { owner, repo } = context.repo;
+            const release_id = Number(process.env.RELEASE_ID);
+            const name = process.env.ASSET;
+            // Chạy lại workflow: xoá file cũ cùng tên trước khi upload.
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, { owner, repo, release_id, per_page: 100 });
+            for (const asset of assets.filter((a) => a.name === name)) {
+              await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: asset.id });
+            }
+            await github.rest.repos.uploadReleaseAsset({
+              owner, repo, release_id, name,
+              data: fs.readFileSync(name),
+              headers: { "content-type": "application/zip", "content-length": fs.statSync(name).size },
+            });
 
   publish:
     name: Phát hành
@@ -216,7 +234,12 @@ jobs:
     if: ${{ !inputs.draft }}
     runs-on: ubuntu-latest
     steps:
-      - env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ needs.create-release.outputs.tag }}
-        run: gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+      - uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release-id }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            await github.rest.repos.updateRelease({
+              owner, repo, release_id: Number(process.env.RELEASE_ID), draft: false,
+            });
