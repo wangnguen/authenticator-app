@@ -3,7 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "icons": "node scripts/generate-icons.mjs",
     "dev:desktop": "pnpm --filter desktop tauri dev",
     "build:desktop": "pnpm --filter desktop tauri build",
     "dev:extension": "pnpm --filter extension dev",

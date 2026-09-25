@@ -40,9 +40,22 @@ Yêu cầu khi vẽ / thay icon:
 1. Thay `assets/icon.svg` bằng logo mới (giữ nguyên tên file).
    Cũng có thể dùng `assets/icon.png` (hình vuông, tối thiểu 1024×1024, nền trong suốt nếu muốn);
    nếu có cả hai thì `icon.svg` được ưu tiên, nên xoá file cũ đi.
-2. Chạy ở thư mục gốc của repo:
+2. Tạo lại icon bằng `tauri icon` (chạy trong thư mục `desktop/`, Git Bash). Nếu dùng PNG thì
+   đổi `icon.svg` thành `icon.png`:
    ```bash
-   pnpm icons
+   cd desktop
+
+   # App desktop: .ico, .icns, các PNG trong tauri.conf.json (bỏ icon mobile tạo kèm)
+   pnpm tauri icon ../assets/icon.svg
+   rm -rf src-tauri/icons/android src-tauri/icons/ios
+
+   # Extension: tên file khớp extension/public/manifest.json
+   pnpm tauri icon ../assets/icon.svg -o ../extension/public/icons --png 16,32,48,128
+
+   # Website: logo 120×120 cho trang Branding của Google, favicon 32×32
+   pnpm tauri icon ../assets/icon.svg -o ../docs --png 120,32
+   mv -f ../docs/120x120.png ../docs/logo.png
+   mv -f ../docs/32x32.png ../docs/favicon.png
    ```
 3. Build lại app / extension. Website (`docs/`) cập nhật sau khi push.
 

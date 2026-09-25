@@ -5,7 +5,7 @@ App quản lý mã 2FA (TOTP) cho Windows gồm **app desktop** (Tauri v2 + Reac
 
 ```
 authenticator-app/
-├── assets/            # file gốc của logo (icon.svg); `pnpm icons` tạo lại mọi icon
+├── assets/            # file gốc của logo (icon.svg) và icon giao diện
 ├── packages/
 │   ├── core/          # types, protocol native messaging, hàm format (TS)
 │   └── ui/            # React components, hook useCodes, đọc QR, CSS dùng chung
@@ -16,11 +16,11 @@ authenticator-app/
 └── docs/              # website GitHub Pages (trang chủ, chính sách bảo mật, điều khoản)
 ```
 
-**Đổi logo:** thay `assets/icon.svg` rồi chạy `pnpm icons` (chi tiết: [assets/README.md](assets/README.md)).
+**Đổi logo:** thay `assets/icon.svg` rồi tạo lại icon (lệnh và chi tiết: [assets/README.md](assets/README.md)).
 
 ## Yêu cầu
 
-- Node.js 22+, pnpm 10+
+- Node.js 22+, pnpm 11+
 - Rust (toolchain `x86_64-pc-windows-msvc`) và Visual Studio Build Tools (C++)
 - WebView2 Runtime (có sẵn trên Windows 10/11 bản mới)
 
@@ -100,7 +100,7 @@ Thư mục [`docs/`](docs/) là website cho GitHub Pages: trang chủ, chính s�
 
 1. **Email liên hệ** trên các trang: `duc.phan33@ntq-solution.com.vn` (sửa trong `docs/*.html` nếu đổi).
 2. **Bật GitHub Pages**: repo trên GitHub → **Settings → Pages** → *Source*: **Deploy from a branch**
-   → Branch **master**, thư mục **/docs** → **Save**. Sau 1–2 phút website có ở
+   → Branch **main**, thư mục **/docs** → **Save**. Sau 1–2 phút website có ở
    `https://wangnguen.github.io/authenticator-app/`.
 3. **Xác minh domain trong [Google Search Console](https://search.google.com/search-console)**
    (bằng đúng tài khoản Google sở hữu project trên Google Cloud):
@@ -131,10 +131,46 @@ Thư mục [`docs/`](docs/) là website cho GitHub Pages: trang chủ, chính s�
 
 ## Build bản phát hành
 
+Build trên máy:
+
 ```bash
 pnpm build:desktop     # installer NSIS trong desktop/src-tauri/target/release/bundle/nsis
 pnpm build:extension   # zip thư mục extension/dist để đưa lên Chrome Web Store / Edge Add-ons
 ```
+
+### Release bằng GitHub Actions (chạy thủ công)
+
+Workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) chạy test, rồi build song song
+và gắn vào GitHub Release `v<version>`:
+
+| Nền tảng | File |
+|---|---|
+| Windows | `Authenticator_<version>_x64-setup.exe` (NSIS) |
+| macOS (universal: Intel + Apple Silicon) | `Authenticator_<version>_universal.dmg` |
+| Ubuntu / Debian | `Authenticator_<version>_amd64.deb`, `Authenticator_<version>_amd64.AppImage` |
+| Extension Chrome / Edge | `authenticator-extension-<version>.zip` |
+
+Chuẩn bị một lần: repo trên GitHub → **Settings → Secrets and variables → Actions → New repository
+secret**, tên `GOOGLE_OAUTH_CONFIG`, giá trị là toàn bộ nội dung file `desktop/src-tauri/google-oauth.json`.
+Không có secret này thì bản build vẫn chạy nhưng không đăng nhập Google được.
+
+Mỗi lần phát hành:
+
+1. Push code cần phát hành lên GitHub.
+2. GitHub → **Actions → Release → Run workflow** → nhập **version** (dạng `x.y.z`, ví dụ `0.2.0`).
+   Version này được ghi vào app và extension lúc build, không cần sửa file trong repo.
+3. Mặc định tạo **bản nháp**; kiểm tra file ở trang **Releases** rồi bấm **Publish release**.
+   Bỏ chọn *draft* nếu muốn phát hành luôn.
+
+Chạy lại với version đã *publish* sẽ bị từ chối (phải tăng version); chạy lại khi còn là bản nháp
+thì file cũ được ghi đè.
+
+Lưu ý:
+
+- App chưa ký số: Windows hiện cảnh báo SmartScreen; macOS dùng chữ ký ad-hoc nên lần đầu phải
+  chuột phải → **Open**.
+- Trên macOS và Ubuntu hiện chỉ dùng được vault **có master password**: chế độ không mật khẩu và
+  lưu phiên Google dùng Windows DPAPI, kết nối extension dùng named pipe và registry của Windows.
 
 ## Kiến trúc
 
