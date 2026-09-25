@@ -88,6 +88,126 @@ h3 {
   word-break: break-all;
 }
 
+/* Đăng nhập Google ở góc phải thanh công cụ. */
+.google-menu {
+  position: relative;
+}
+
+.google-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Nút đăng nhập chỉ có logo G, cùng cỡ với các nút icon khác trên thanh công cụ. */
+.google-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 36px;
+  padding: 0;
+}
+
+.google-icon-btn .google-logo {
+  width: 18px;
+  height: 18px;
+}
+
+.google-logo {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.avatar-btn {
+  display: flex;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+
+.avatar-btn:hover {
+  border-color: var(--auth-accent);
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.avatar--letter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--auth-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.google-menu__panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 280px;
+  padding: 12px;
+  border: 1px solid var(--auth-border);
+  border-radius: var(--auth-radius);
+  background: var(--auth-bg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+.google-menu__panel p {
+  margin: 0;
+}
+
+.google-menu__profile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.google-menu__profile > div {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.google-menu__profile span {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confirm-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--auth-border);
+  border-radius: var(--auth-radius);
+  background: var(--auth-surface);
+  text-align: left;
+}
+
+.confirm-box p {
+  margin: 0;
+}
+
+.toolbar__actions {
+  align-items: center;
+}
+
 .panel__actions {
   display: flex;
   justify-content: flex-end;

@@ -5,6 +5,7 @@ mod app;
 mod commands;
 mod dpapi;
 mod error;
+mod google;
 mod ipc;
 mod migration;
 mod native_host;

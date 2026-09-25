@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { errorMessage, MIN_PASSWORD_LENGTH } from "@auth/core";
 import { api } from "../api";
+import { RestoreFromGoogle } from "./RestoreFromGoogle";
 
 interface Props {
   mode: "setup" | "unlock";
@@ -85,6 +86,8 @@ export function PasswordScreen({ mode, onDone }: Props) {
               Vault tự mở khoá khi bạn đăng nhập Windows. Ai dùng được tài khoản Windows của
               bạn cũng xem được mã. Bạn có thể đặt mật khẩu sau trong ⚙ Bảo mật.
             </p>
+            <div className="divider">đã có bản sao lưu?</div>
+            <RestoreFromGoogle onRestored={onDone} />
           </>
         )}
       </form>

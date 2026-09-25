@@ -4,6 +4,7 @@ import { CodeList, SearchBox, useCodes } from "@auth/ui";
 import { api } from "../api";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { ExtensionPanel } from "./ExtensionPanel";
+import { GoogleAccountMenu } from "./GoogleAccountMenu";
 import { SecurityPanel } from "./SecurityPanel";
 
 type Panel = "extension" | "security" | null;
@@ -77,6 +78,14 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
               🔒
             </button>
           )}
+          <GoogleAccountMenu
+            hasPassword={hasPassword}
+            onRestored={() => {
+              // Bản JSON không mã hoá khôi phục xong vẫn mở sẵn, nên tải lại danh sách mã.
+              onSecurityChanged();
+              void refresh();
+            }}
+          />
         </div>
       </header>
 

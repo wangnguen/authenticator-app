@@ -1,3 +1,4 @@
+use crate::google::Google;
 use crate::vault::{SharedVault, Vault};
 use crate::{commands, ipc, register};
 use std::sync::{Arc, Mutex};
@@ -11,6 +12,8 @@ pub fn run() {
                 let _ = window.set_focus();
             }
         }))
+        // Mở trình duyệt mặc định cho bước đăng nhập Google.
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
@@ -23,6 +26,7 @@ pub fn run() {
             let vault: SharedVault = Arc::new(Mutex::new(vault));
             app.manage(vault.clone());
             app.manage(register::register(&data_dir));
+            app.manage(Google::new(data_dir.clone()));
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -43,6 +47,13 @@ pub fn run() {
             commands::preview_uri,
             commands::import_uri,
             commands::delete_account,
+            commands::google_account,
+            commands::google_sign_in,
+            commands::google_sign_out,
+            commands::google_backup_info,
+            commands::google_open_backup_folder,
+            commands::google_backup,
+            commands::google_restore,
             commands::extension_info,
         ])
         .run(tauri::generate_context!())

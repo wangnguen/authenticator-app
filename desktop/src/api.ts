@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
   AccountSummary,
+  BackupInfo,
+  GoogleProfile,
   CodeEntry,
   ImportPreview,
   ImportResult,
@@ -35,6 +37,17 @@ export const api = {
   previewUri: (uri: string) => invoke<ImportPreview>("preview_uri", { uri }),
   deleteAccount: (id: string) => invoke<void>("delete_account", { id }),
   extensionInfo: () => invoke<ExtensionInfo>("extension_info"),
+
+  googleAccount: () => invoke<GoogleProfile | null>("google_account"),
+  /** Mở trình duyệt để đăng nhập, resolve khi đăng nhập xong. */
+  googleSignIn: () => invoke<GoogleProfile>("google_sign_in"),
+  googleSignOut: () => invoke<void>("google_sign_out"),
+  googleBackupInfo: () => invoke<BackupInfo | null>("google_backup_info"),
+  googleBackup: () => invoke<BackupInfo>("google_backup"),
+  /** Mở thư mục "Authenticator Backup" trên Google Drive bằng trình duyệt. */
+  googleOpenBackupFolder: () => invoke<void>("google_open_backup_folder"),
+  /** Thay vault trên máy bằng bản sao lưu; sau đó vault bị khoá. */
+  googleRestore: () => invoke<void>("google_restore"),
   /** Extension vừa thêm tài khoản (qua quét QR). */
   onVaultChanged: (callback: () => void) => listen("vault-changed", callback),
 };

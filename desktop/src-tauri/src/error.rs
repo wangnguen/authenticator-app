@@ -69,6 +69,12 @@ impl From<std::io::Error> for AppError {
     }
 }
 
+impl From<reqwest::Error> for AppError {
+    fn from(e: reqwest::Error) -> Self {
+        Self::new("NETWORK", format!("Không kết nối được tới Google: {e}"))
+    }
+}
+
 impl From<serde_json::Error> for AppError {
     fn from(e: serde_json::Error) -> Self {
         Self::internal(e)

@@ -53,6 +53,19 @@ export interface ImportPreview {
   unsupported: number;
 }
 
+export interface GoogleProfile {
+  email: string;
+  name: string;
+  picture: string | null;
+}
+
+/** Bản sao lưu vault trên Google Drive. */
+export interface BackupInfo {
+  /** RFC 3339. */
+  modifiedTime: string | null;
+  size: number | null;
+}
+
 export interface VaultStatus {
   exists: boolean;
   unlocked: boolean;

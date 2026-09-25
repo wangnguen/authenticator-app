@@ -101,6 +101,16 @@ pub struct ImportResult {
     pub unsupported: usize,
 }
 
+const PLAIN_BACKUP_FORMAT: &str = "authenticator-plain-backup";
+
+/// Bản sao lưu của vault không mật khẩu: danh sách tài khoản dạng JSON, không mã hoá.
+#[derive(Serialize, Deserialize)]
+struct PlainBackup {
+    format: String,
+    version: u32,
+    accounts: Vec<Account>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountPreview {
@@ -352,6 +362,66 @@ impl Vault {
 
     pub fn lock(&mut self) {
         self.unlocked = None;
+    }
+
+    /// Nội dung bản sao lưu:
+    /// - vault có master password: nguyên file vault (đã mã hoá).
+    /// - vault không mật khẩu: key do DPAPI giữ, không mang sang máy khác được, nên sao lưu
+    ///   danh sách tài khoản dạng JSON không mã hoá (chỉ được bảo vệ bởi tài khoản Google).
+    pub fn backup_bytes(&self) -> AppResult<Vec<u8>> {
+        if !self.path.exists() {
+            return Err(AppError::no_vault());
+        }
+        if self.read_file()?.kdf.is_some() {
+            return Ok(fs::read(&self.path)?);
+        }
+        let backup = PlainBackup {
+            format: PLAIN_BACKUP_FORMAT.into(),
+            version: 1,
+            accounts: self.unlocked()?.accounts.clone(),
+        };
+        Ok(serde_json::to_vec_pretty(&backup)?)
+    }
+
+    /// Thay vault trên máy bằng bản sao lưu. Vault cũ (nếu có) được giữ ở `vault.json.bak`.
+    /// - Bản mã hoá: vault bị khoá, mở bằng master password của bản sao lưu.
+    /// - Bản JSON không mã hoá: tạo vault không mật khẩu, mở khoá luôn.
+    pub fn restore_backup(&mut self, bytes: &[u8]) -> AppResult<()> {
+        let invalid = || AppError::new("INVALID_BACKUP", "Bản sao lưu không hợp lệ.");
+        let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+
+        if value["format"] == PLAIN_BACKUP_FORMAT {
+            let backup: PlainBackup = serde_json::from_value(value).map_err(|_| invalid())?;
+            self.keep_previous_vault()?;
+            let (key, protection) = Protection::generate(None)?;
+            self.unlocked = Some(Unlocked {
+                key,
+                protection,
+                accounts: backup.accounts,
+            });
+            return self.save();
+        }
+
+        let file: VaultFile = serde_json::from_value(value).map_err(|_| invalid())?;
+        if file.version != FILE_VERSION || file.kdf.is_none() {
+            return Err(invalid());
+        }
+        self.keep_previous_vault()?;
+        let tmp = self.path.with_extension("json.tmp");
+        fs::write(&tmp, bytes)?;
+        fs::rename(&tmp, &self.path)?;
+        self.lock();
+        Ok(())
+    }
+
+    fn keep_previous_vault(&self) -> AppResult<()> {
+        if let Some(dir) = self.path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        if self.path.exists() {
+            fs::copy(&self.path, self.path.with_extension("json.bak"))?;
+        }
+        Ok(())
     }
 
     fn read_file(&self) -> AppResult<VaultFile> {
@@ -684,6 +754,55 @@ mod tests {
         assert_eq!(summary, [("a", 6, true), ("b", 8, false), ("b-again", 6, true)]);
         assert_eq!(vault.codes().unwrap().len(), 1, "preview không được lưu");
         let _ = fs::remove_dir_all(vault.path.parent().unwrap());
+    }
+
+    #[test]
+    fn backup_and_restore_roundtrip() {
+        let mut source = temp_vault();
+        source.create(Some("correct horse")).unwrap();
+        source.add(sample()).unwrap();
+        let backup = source.backup_bytes().unwrap();
+
+        // Máy mới đã có vault khác: khôi phục thì vault cũ được giữ ở .bak.
+        let mut target = temp_vault();
+        target.create(Some("other password")).unwrap();
+        target.restore_backup(&backup).unwrap();
+        assert!(!target.status().unlocked);
+        assert!(target.path.with_extension("json.bak").exists());
+        assert_eq!(target.unlock(Some("other password")).unwrap_err().code, "WRONG_PASSWORD");
+        target.unlock(Some("correct horse")).unwrap();
+        assert_eq!(target.codes().unwrap()[0].issuer, "GitHub");
+
+        assert_eq!(target.restore_backup(b"{}").unwrap_err().code, "INVALID_BACKUP");
+        let _ = fs::remove_dir_all(source.path.parent().unwrap());
+        let _ = fs::remove_dir_all(target.path.parent().unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn passwordless_backup_restores_without_password() {
+        let mut source = temp_vault();
+        source.create(None).unwrap();
+        source.add(sample()).unwrap();
+        let backup = source.backup_bytes().unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&backup).unwrap();
+        assert_eq!(json["format"], PLAIN_BACKUP_FORMAT);
+        assert_eq!(json["accounts"][0]["issuer"], "GitHub");
+
+        // Máy mới (vault có mật khẩu): khôi phục xong là vault không mật khẩu, mở sẵn.
+        let mut target = temp_vault();
+        target.create(Some("other password")).unwrap();
+        target.restore_backup(&backup).unwrap();
+        let status = target.status();
+        assert!(status.unlocked && !status.has_password);
+        assert_eq!(target.codes().unwrap()[0].issuer, "GitHub");
+        assert!(target.path.with_extension("json.bak").exists());
+
+        let mut reopened = Vault::new(target.path.clone());
+        reopened.auto_unlock().unwrap();
+        assert_eq!(reopened.codes().unwrap().len(), 1);
+        let _ = fs::remove_dir_all(source.path.parent().unwrap());
+        let _ = fs::remove_dir_all(target.path.parent().unwrap());
     }
 
     #[cfg(windows)]

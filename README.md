@@ -42,6 +42,53 @@ Load extension:
 App desktop **tự đăng ký native messaging host** (HKCU, không cần quyền admin) mỗi lần khởi động.
 Nếu Chrome/Edge đang mở từ trước thì nên mở lại extension popup sau khi app chạy.
 
+## Đăng nhập Google (sao lưu lên Google Drive)
+
+Nút **Đăng nhập Google** (logo G ở góc phải) dùng để sao lưu / khôi phục vault vào thư mục
+**`Authenticator Backup`** trong My Drive (file `vault-backup.json`, mỗi lần sao lưu ghi đè).
+Thư mục này xem/tải được trên drive.google.com; trong menu có nút **📂 Mở thư mục trên Drive**.
+App dùng scope `drive.file`: chỉ thấy file do chính nó tạo, không đọc được file khác trong Drive.
+
+- Vault có master password: sao lưu nguyên file vault đã mã hoá, khôi phục xong cần nhập master
+  password của bản sao lưu.
+- Vault không mật khẩu: key do Windows DPAPI giữ, không mang sang máy khác được, nên sao lưu
+  danh sách tài khoản dạng **JSON không mã hoá**: ai mở được file trên Drive (hoặc được bạn chia
+  sẻ file) đều thấy secret 2FA. Khôi phục xong vault mở sẵn, không cần mật khẩu.
+
+Cần tạo OAuth Client ID một lần (khoảng 5 phút):
+
+1. Vào [Google Cloud Console](https://console.cloud.google.com/), tạo project mới (ví dụ `authenticator-app`).
+2. **APIs & Services → Library**: tìm **Google Drive API** → **Enable**.
+3. **APIs & Services → OAuth consent screen** (Google Auth Platform):
+   - User type **External**, điền tên app, email hỗ trợ.
+   - **Data access / Scopes**: thêm `openid`, `.../auth/userinfo.email`, `.../auth/userinfo.profile`,
+     `.../auth/drive.file`.
+   - **Audience / Test users**: thêm Gmail của bạn (khi app ở chế độ *Testing* chỉ test user
+     đăng nhập được).
+4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
+   - Application type: **Desktop app** → **Create** → **Download JSON**.
+5. Đổi tên file vừa tải thành `google-oauth.json` và copy vào:
+   ```
+   %APPDATA%\com.authenticator.app\google-oauth.json
+   ```
+   (File có dạng `{"installed": {"client_id": ..., "client_secret": ...}}`. Không commit file này.)
+
+   Hoặc đặt file ở `desktop/src-tauri/google-oauth.json` (đã có trong `.gitignore`): `build.rs`
+   sẽ nhúng cấu hình vào exe lúc build, máy nào chạy bản build đó cũng đăng nhập được.
+   File trong `%APPDATA%` được ưu tiên hơn cấu hình nhúng.
+6. Mở lại app → bấm **Đăng nhập Google** → trình duyệt mở trang đăng nhập → đồng ý → quay lại app.
+
+Lưu ý:
+
+- Ở chế độ *Testing*, Google thu hồi refresh token sau 7 ngày, khi đó app báo phiên hết hạn và
+  bạn đăng nhập lại. Muốn dùng lâu dài thì **Publish app** trong OAuth consent screen.
+- Refresh token lưu ở `%APPDATA%\com.authenticator.app\google-account.json`, được khoá bằng
+  Windows DPAPI. Access token chỉ nằm trong RAM.
+- Đăng nhập dùng OAuth cho app desktop: mở trình duyệt, Google chuyển hướng về
+  `http://127.0.0.1:<cổng ngẫu nhiên>` do app mở tạm, có PKCE.
+- Máy mới: ở màn hình tạo vault bấm **Khôi phục từ Google Drive**, sau đó nhập master password
+  của bản sao lưu. Khôi phục trên máy đang có vault thì vault cũ được giữ ở `vault.json.bak`.
+
 ## Build bản phát hành
 
 ```bash
@@ -85,7 +132,7 @@ Extension popup ──connectNative──▶ authenticator.exe (chế độ nati
 ## Kiểm thử
 
 ```bash
-cd desktop/src-tauri && cargo test   # RFC 6238, otpauth/migration, vault, DPAPI, native messaging
+cd desktop/src-tauri && cargo test   # RFC 6238, otpauth/migration, vault, DPAPI, OAuth loopback, native messaging
 pnpm test                            # đọc nhiều QR trong một ảnh (packages/ui)
 pnpm typecheck
 ```
@@ -93,7 +140,7 @@ pnpm typecheck
 ## Hướng phát triển tiếp
 
 - Tự khoá vault sau một khoảng thời gian không dùng
-- Export và backup mã hoá
+- Tự sao lưu lên Google Drive mỗi khi thêm/xoá tài khoản
 - Xác nhận trong app desktop khi extension lần đầu xin mã (pairing)
 - Xoá registry key native host khi gỡ cài đặt (NSIS uninstall hook)
 - System tray: chạy ẩn khi đóng cửa sổ để extension luôn kết nối được
