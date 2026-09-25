@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Xác minh Google Search Console: dán thẻ <meta name="google-site-verification" ...> vào đây -->
+    <title>Authenticator – Quản lý mã 2FA trên Windows</title>
+    <meta
+      name="description"
+      content="Authenticator: app quản lý mã xác thực 2 lớp (TOTP) cho Windows, kèm extension Chrome/Edge, sao lưu vào Google Drive của chính bạn."
+    />
+    <link rel="icon" href="favicon.png" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <img src="logo.png" alt="Authenticator logo" />
+      <h1>Authenticator</h1>
+    </header>
+    <nav>
+      <a href="#vi">Tiếng Việt</a>
+      <a href="#en">English</a>
+      <a href="privacy.html">Chính sách bảo mật / Privacy Policy</a>
+      <a href="terms.html">Điều khoản / Terms of Service</a>
+      <a href="https://github.com/wangnguen/authenticator-app">Mã nguồn / Source code</a>
+    </nav>
+
+    <section id="vi">
+      <p>
+        <strong>Authenticator</strong> là app quản lý mã xác thực 2 lớp (2FA / TOTP) cho Windows,
+        đi kèm extension cho Chrome và Edge. Mã được tạo ngay trên máy của bạn, không cần gửi đi đâu.
+      </p>
+
+      <h2>Tính năng</h2>
+      <ul>
+        <li>Tạo mã 2FA theo chuẩn TOTP (RFC 6238), tương thích Google Authenticator, Microsoft Authenticator…</li>
+        <li>Thêm tài khoản bằng link <code>otpauth://</code>, ảnh QR, dán ảnh chụp màn hình hoặc nhập tay.</li>
+        <li>Import toàn bộ tài khoản từ Google Authenticator (mã QR export).</li>
+        <li>Vault được mã hoá AES-256-GCM, có thể đặt master password (Argon2id).</li>
+        <li>Extension Chrome/Edge: xem, copy và điền mã vào trang đang mở; quét QR trên trang.</li>
+        <li>
+          Sao lưu / khôi phục tuỳ chọn vào <strong>Google Drive của chính bạn</strong>, trong thư mục
+          <code>Authenticator Backup</code>.
+        </li>
+      </ul>
+
+      <h2>App dùng tài khoản Google để làm gì?</h2>
+      <div class="card">
+        <p>
+          Đăng nhập Google là <strong>tuỳ chọn</strong>, chỉ dùng cho tính năng sao lưu. Khi bạn đăng nhập,
+          app chỉ xin:
+        </p>
+        <ul>
+          <li><strong>Tên, email, ảnh đại diện</strong>: để hiện tài khoản đang đăng nhập trong app.</li>
+          <li>
+            <strong>Quyền <code>drive.file</code></strong>: chỉ tạo và đọc các file do chính app tạo
+            (thư mục <code>Authenticator Backup</code> và file <code>vault-backup.json</code>). App
+            <strong>không</strong> xem được các file khác trong Google Drive của bạn.
+          </li>
+        </ul>
+        <p>
+          App không có server riêng: dữ liệu đi thẳng từ máy bạn tới Google Drive của bạn, nhà phát
+          triển không nhận được bất kỳ dữ liệu nào. Chi tiết xem
+          <a href="privacy.html">Chính sách bảo mật</a>.
+        </p>
+      </div>
+    </section>
+
+    <section id="en" class="lang" lang="en">
+      <p>
+        <strong>Authenticator</strong> is a two-factor authentication (2FA / TOTP) code manager for
+        Windows, with a companion extension for Chrome and Edge. Codes are generated locally on your
+        computer.
+      </p>
+
+      <h2>Features</h2>
+      <ul>
+        <li>Standard TOTP codes (RFC 6238), compatible with Google Authenticator, Microsoft Authenticator, etc.</li>
+        <li>Add accounts from <code>otpauth://</code> links, QR images, pasted screenshots or manual entry.</li>
+        <li>Import all accounts from Google Authenticator (export QR codes).</li>
+        <li>Vault encrypted with AES-256-GCM, optional master password (Argon2id).</li>
+        <li>Chrome/Edge extension: view, copy and autofill codes; scan QR codes on the current page.</li>
+        <li>
+          Optional backup / restore to <strong>your own Google Drive</strong>, in the
+          <code>Authenticator Backup</code> folder.
+        </li>
+      </ul>
+
+      <h2>How does the app use your Google account?</h2>
+      <div class="card">
+        <p>Signing in with Google is <strong>optional</strong> and only used for backup. The app requests:</p>
+        <ul>
+          <li><strong>Name, email and profile picture</strong>: to show which account is signed in.</li>
+          <li>
+            <strong>The <code>drive.file</code> scope</strong>: to create and read only the files the
+            app itself creates (the <code>Authenticator Backup</code> folder and the
+            <code>vault-backup.json</code> file). The app <strong>cannot</strong> see any other files
+            in your Google Drive.
+          </li>
+        </ul>
+        <p>
+          The app has no servers of its own: data goes directly from your computer to your Google
+          Drive, and the developer never receives any of it. See the
+          <a href="privacy.html">Privacy Policy</a> for details.
+        </p>
+      </div>
+    </section>
+
+    <footer>
+      Liên hệ / Contact: <a href="mailto:duc.phan33@ntq-solution.com.vn">duc.phan33@ntq-solution.com.vn</a> ·
+      <a href="privacy.html">Privacy Policy</a> · <a href="terms.html">Terms of Service</a>
+    </footer>
+  </body>
+</html>

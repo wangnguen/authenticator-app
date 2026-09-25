@@ -89,6 +89,42 @@ Lưu ý:
 - Máy mới: ở màn hình tạo vault bấm **Khôi phục từ Google Drive**, sau đó nhập master password
   của bản sao lưu. Khôi phục trên máy đang có vault thì vault cũ được giữ ở `vault.json.bak`.
 
+### Publish app để mọi tài khoản Google đăng nhập được
+
+Thư mục [`docs/`](docs/) là website cho GitHub Pages: trang chủ, chính sách bảo mật, điều khoản
+(tiếng Việt + English) và logo 120×120 — đủ cho trang **Branding** của Google.
+
+1. **Email liên hệ** trên các trang: `duc.phan33@ntq-solution.com.vn` (sửa trong `docs/*.html` nếu đổi).
+2. **Bật GitHub Pages**: repo trên GitHub → **Settings → Pages** → *Source*: **Deploy from a branch**
+   → Branch **master**, thư mục **/docs** → **Save**. Sau 1–2 phút website có ở
+   `https://wangnguen.github.io/authenticator-app/`.
+3. **Xác minh domain trong [Google Search Console](https://search.google.com/search-console)**
+   (bằng đúng tài khoản Google sở hữu project trên Google Cloud):
+   - **Add property** → **URL prefix** → `https://wangnguen.github.io/authenticator-app/`.
+   - Chọn cách **HTML tag**, copy thẻ `<meta name="google-site-verification" ...>`, dán vào
+     `docs/index.html` (chỗ có comment "Xác minh Google Search Console"), commit + push, đợi Pages
+     cập nhật rồi bấm **Verify**.
+   - Nếu trang Branding vẫn báo domain `wangnguen.github.io` chưa xác minh: tạo thêm repo
+     `wangnguen.github.io` (GitHub Pages của tài khoản) chứa `index.html` có thẻ meta đó, rồi xác
+     minh property `https://wangnguen.github.io/` (gốc domain).
+4. **Branding** (https://console.cloud.google.com/auth/branding):
+
+   | Ô | Giá trị |
+   |---|---|
+   | App name | `Authenticator` |
+   | User support email | email của bạn |
+   | App logo | `docs/logo.png` (không bắt buộc; có logo thì Google thường yêu cầu brand verification) |
+   | Application home page | `https://wangnguen.github.io/authenticator-app/` |
+   | Application privacy policy link | `https://wangnguen.github.io/authenticator-app/privacy.html` |
+   | Application terms of service link | `https://wangnguen.github.io/authenticator-app/terms.html` |
+   | Authorized domains | `wangnguen.github.io` |
+   | Developer contact information | email của bạn |
+
+5. **Data Access**: chỉ giữ `openid`, `.../auth/userinfo.email`, `.../auth/userinfo.profile`,
+   `.../auth/drive.file` (đều là scope không nhạy cảm → không cần review scope).
+6. **Audience → Publish app → Confirm**. Nếu Google yêu cầu, gửi brand verification ở
+   **Verification Center** (thường vài ngày làm việc).
+
 ## Build bản phát hành
 
 ```bash

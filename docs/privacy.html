@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chính sách bảo mật / Privacy Policy – Authenticator</title>
+    <link rel="icon" href="favicon.png" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <img src="logo.png" alt="Authenticator logo" />
+      <h1>Chính sách bảo mật / Privacy Policy</h1>
+    </header>
+    <nav>
+      <a href="index.html">Trang chủ / Home</a>
+      <a href="#vi">Tiếng Việt</a>
+      <a href="#en">English</a>
+      <a href="terms.html">Điều khoản / Terms of Service</a>
+    </nav>
+    <p class="muted">Cập nhật lần cuối / Last updated: 25/09/2026</p>
+
+    <section id="vi">
+      <p>
+        Chính sách này mô tả cách app <strong>Authenticator</strong> (app Windows và extension
+        Chrome/Edge) xử lý dữ liệu của bạn. Tóm tắt: <strong>app không có server riêng, không thu thập
+        và không gửi dữ liệu của bạn cho nhà phát triển hay bên thứ ba nào.</strong>
+      </p>
+
+      <h2>1. Dữ liệu lưu trên máy của bạn</h2>
+      <ul>
+        <li>
+          Các tài khoản 2FA (tên dịch vụ, tên tài khoản, secret key) được lưu trong file vault trên máy
+          (<code>%APPDATA%\com.authenticator.app\</code>), mã hoá AES-256-GCM. Nếu bạn đặt master
+          password, key mã hoá được tạo từ mật khẩu (Argon2id); nếu không, key được Windows DPAPI bảo vệ
+          theo tài khoản Windows của bạn.
+        </li>
+        <li>Mã 2FA được tạo ngay trên máy, không cần kết nối mạng.</li>
+      </ul>
+
+      <h2>2. Dữ liệu từ tài khoản Google (chỉ khi bạn đăng nhập Google)</h2>
+      <p>Đăng nhập Google là tuỳ chọn và chỉ dùng cho tính năng sao lưu / khôi phục. App yêu cầu:</p>
+      <ul>
+        <li>
+          <strong>Thông tin cơ bản</strong> (<code>openid</code>, <code>email</code>,
+          <code>profile</code>): tên, email, ảnh đại diện, chỉ để hiển thị tài khoản đang đăng nhập
+          trong app.
+        </li>
+        <li>
+          <strong>Google Drive – chỉ file do app tạo</strong> (<code>drive.file</code>): tạo thư mục
+          <code>Authenticator Backup</code> và đọc / ghi file <code>vault-backup.json</code> trong
+          Google Drive của chính bạn. App không xem, sửa hay xoá bất kỳ file nào khác trong Drive.
+        </li>
+      </ul>
+      <p>
+        Nội dung file sao lưu: nếu vault có master password thì là file vault đã mã hoá; nếu vault không
+        có mật khẩu thì là danh sách tài khoản dạng JSON <strong>không mã hoá</strong> – khi đó ai truy
+        cập được file này trong Drive của bạn (hoặc được bạn chia sẻ) đều đọc được secret 2FA. Chúng tôi
+        khuyên bạn đặt master password trước khi sao lưu.
+      </p>
+      <p>
+        Refresh token đăng nhập Google được lưu trên máy, mã hoá bằng Windows DPAPI; access token chỉ nằm
+        trong bộ nhớ khi app chạy. Dữ liệu được truyền trực tiếp giữa máy bạn và máy chủ của Google qua
+        HTTPS.
+      </p>
+
+      <h2>3. Extension Chrome / Edge</h2>
+      <ul>
+        <li>Extension chỉ giao tiếp với app Authenticator trên chính máy của bạn (native messaging).</li>
+        <li>
+          Extension không đọc lịch sử duyệt web. Chỉ khi bạn bấm <em>Quét QR</em>, extension chụp tab đang
+          mở để tìm mã QR; ảnh được xử lý trên máy và không được lưu hay gửi đi. Khi bạn bấm
+          <em>Điền</em>, extension điền mã vào ô nhập trên trang hiện tại.
+        </li>
+      </ul>
+
+      <h2>4. Chia sẻ dữ liệu</h2>
+      <p>
+        Chúng tôi không bán, không chia sẻ và không chuyển dữ liệu của bạn cho bất kỳ ai. App không chứa
+        quảng cáo hay công cụ phân tích (analytics). Dữ liệu từ Google chỉ được dùng cho tính năng sao lưu
+        / khôi phục mô tả ở trên, không dùng để huấn luyện mô hình AI hay cho mục đích nào khác.
+      </p>
+      <p>
+        Việc Authenticator sử dụng và chuyển thông tin nhận được từ Google API tuân thủ
+        <a href="https://developers.google.com/terms/api-services-user-data-policy">Chính sách dữ liệu người
+        dùng của Google API Services</a>, bao gồm các yêu cầu về Sử dụng giới hạn (Limited Use).
+      </p>
+
+      <h2>5. Xoá dữ liệu và thu hồi quyền</h2>
+      <ul>
+        <li>Đăng xuất Google trong app: token trên máy bị xoá và quyền truy cập được thu hồi.</li>
+        <li>
+          Thu hồi quyền bất kỳ lúc nào tại
+          <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.
+        </li>
+        <li>Xoá bản sao lưu: xoá thư mục <code>Authenticator Backup</code> trong Google Drive.</li>
+        <li>Xoá dữ liệu trên máy: gỡ app và xoá thư mục <code>%APPDATA%\com.authenticator.app\</code>.</li>
+      </ul>
+
+      <h2>6. Thay đổi chính sách</h2>
+      <p>Khi chính sách thay đổi, chúng tôi cập nhật trang này và ngày "Cập nhật lần cuối" ở trên.</p>
+
+      <h2>7. Liên hệ</h2>
+      <p>Email: <a href="mailto:duc.phan33@ntq-solution.com.vn">duc.phan33@ntq-solution.com.vn</a></p>
+    </section>
+
+    <section id="en" class="lang" lang="en">
+      <p>
+        This policy describes how <strong>Authenticator</strong> (the Windows app and the Chrome/Edge
+        extension) handles your data. In short: <strong>the app has no servers of its own and does not
+        collect or send your data to the developer or any third party.</strong>
+      </p>
+
+      <h2>1. Data stored on your computer</h2>
+      <ul>
+        <li>
+          Your 2FA accounts (service name, account name, secret key) are stored in a vault file on your
+          computer (<code>%APPDATA%\com.authenticator.app\</code>), encrypted with AES-256-GCM. If you set a
+          master password, the encryption key is derived from it (Argon2id); otherwise the key is protected
+          by Windows DPAPI for your Windows account.
+        </li>
+        <li>2FA codes are generated locally and do not require a network connection.</li>
+      </ul>
+
+      <h2>2. Data from your Google account (only if you sign in with Google)</h2>
+      <p>Signing in with Google is optional and only used for backup / restore. The app requests:</p>
+      <ul>
+        <li>
+          <strong>Basic profile</strong> (<code>openid</code>, <code>email</code>, <code>profile</code>):
+          your name, email address and profile picture, used only to show the signed-in account in the app.
+        </li>
+        <li>
+          <strong>Google Drive – files created by the app only</strong> (<code>drive.file</code>): to create
+          the <code>Authenticator Backup</code> folder and read / write the <code>vault-backup.json</code>
+          file in your own Google Drive. The app does not view, modify or delete any other files in your Drive.
+        </li>
+      </ul>
+      <p>
+        Backup content: if the vault has a master password, the backup is the encrypted vault file; if the
+        vault has no password, it is a <strong>non-encrypted</strong> JSON list of accounts – anyone who can
+        access that file in your Drive (or whom you share it with) can read your 2FA secrets. We recommend
+        setting a master password before backing up.
+      </p>
+      <p>
+        The Google refresh token is stored on your computer, encrypted with Windows DPAPI; access tokens are
+        kept in memory only while the app is running. Data is transferred directly between your computer and
+        Google's servers over HTTPS.
+      </p>
+
+      <h2>3. Chrome / Edge extension</h2>
+      <ul>
+        <li>The extension only communicates with the Authenticator app on your own computer (native messaging).</li>
+        <li>
+          The extension does not read your browsing history. Only when you click <em>Scan QR</em> does it
+          capture the current tab to look for a QR code; the image is processed locally and is not stored or
+          sent anywhere. When you click <em>Fill</em>, it fills the code into an input on the current page.
+        </li>
+      </ul>
+
+      <h2>4. Data sharing</h2>
+      <p>
+        We do not sell, share or transfer your data to anyone. The app contains no ads or analytics. Data
+        obtained from Google is used only for the backup / restore feature described above, and is not used
+        to train AI models or for any other purpose.
+      </p>
+      <p>
+        Authenticator's use and transfer of information received from Google APIs will adhere to the
+        <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User
+        Data Policy</a>, including the Limited Use requirements.
+      </p>
+
+      <h2>5. Deleting data and revoking access</h2>
+      <ul>
+        <li>Sign out of Google in the app: the token on your computer is deleted and access is revoked.</li>
+        <li>
+          Revoke access at any time at
+          <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.
+        </li>
+        <li>Delete backups: delete the <code>Authenticator Backup</code> folder in your Google Drive.</li>
+        <li>Delete local data: uninstall the app and delete <code>%APPDATA%\com.authenticator.app\</code>.</li>
+      </ul>
+
+      <h2>6. Changes to this policy</h2>
+      <p>When this policy changes, we will update this page and the "Last updated" date above.</p>
+
+      <h2>7. Contact</h2>
+      <p>Email: <a href="mailto:duc.phan33@ntq-solution.com.vn">duc.phan33@ntq-solution.com.vn</a></p>
+    </section>
+
+    <footer>
+      <a href="index.html">Authenticator</a> · <a href="terms.html">Terms of Service</a>
+    </footer>
+  </body>
+</html>
