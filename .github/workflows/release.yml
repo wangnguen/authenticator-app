@@ -201,13 +201,14 @@ jobs:
           jq --arg v "$VERSION" '.version = $v' "$manifest" > "$manifest.tmp" && mv "$manifest.tmp" "$manifest"
       - run: pnpm build:extension
       - name: Đóng gói và upload
+        # Không đặt tên biến là ZIP: lệnh zip đọc biến môi trường ZIP làm tuỳ chọn mặc định.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.create-release.outputs.tag }}
-          ZIP: authenticator-extension-${{ needs.create-release.outputs.version }}.zip
+          ASSET: authenticator-extension-${{ needs.create-release.outputs.version }}.zip
         run: |
-          (cd extension/dist && zip -r "$GITHUB_WORKSPACE/$ZIP" .)
-          gh release upload "$TAG" "$ZIP" --clobber
+          (cd extension/dist && zip -r "$GITHUB_WORKSPACE/$ASSET" .)
+          gh release upload "$TAG" "$ASSET" --clobber
 
   publish:
     name: Phát hành
