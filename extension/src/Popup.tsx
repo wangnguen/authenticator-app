@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { describeImport, errorMessage, type VaultStatus } from "@auth/core";
-import { CodeList, SearchBox, useCodes } from "@auth/ui";
+import { CodeList, Icon, SearchBox, useCodes } from "@auth/ui";
 import { native } from "./native";
 import { fillCode, scanQrOnPage } from "./page";
 
@@ -42,7 +42,9 @@ export function Popup() {
   return (
     <main className="popup">
       <header className="popup__header">
-        <h1>🔐 Authenticator</h1>
+        <h1>
+          <Icon name="shield-lock" size={20} /> Authenticator
+        </h1>
       </header>
       {body}
     </main>
@@ -99,7 +101,13 @@ function Codes() {
       <div className="popup__toolbar">
         <SearchBox value={query} onChange={setQuery} />
         <button className="auth-btn" onClick={scan} disabled={scanning} title="Quét QR trên trang">
-          {scanning ? "..." : "📷 QR"}
+          {scanning ? (
+            "..."
+          ) : (
+            <>
+              <Icon name="camera" /> QR
+            </>
+          )}
         </button>
       </div>
       {notice && (

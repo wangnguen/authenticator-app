@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { errorMessage, MIN_PASSWORD_LENGTH } from "@auth/core";
+import { Icon } from "@auth/ui";
 import { api } from "../api";
 import { RestoreFromGoogle } from "./RestoreFromGoogle";
 
@@ -43,7 +44,9 @@ export function PasswordScreen({ mode, onDone }: Props) {
   return (
     <main className="page page--center">
       <form className="password-form" onSubmit={submit}>
-        <h1>🔐 Authenticator</h1>
+        <h1>
+          <Icon name="shield-lock" size={24} /> Authenticator
+        </h1>
         <p className="auth-muted">
           {isSetup
             ? "Đặt master password để bảo vệ vault (tuỳ chọn). Nếu quên mật khẩu, bạn sẽ không khôi phục được dữ liệu."
@@ -84,7 +87,7 @@ export function PasswordScreen({ mode, onDone }: Props) {
             </button>
             <p className="auth-muted hint">
               Vault tự mở khoá khi bạn đăng nhập Windows. Ai dùng được tài khoản Windows của
-              bạn cũng xem được mã. Bạn có thể đặt mật khẩu sau trong ⚙ Bảo mật.
+              bạn cũng xem được mã. Bạn có thể đặt mật khẩu sau trong <Icon name="settings" /> Bảo mật.
             </p>
             <div className="divider">đã có bản sao lưu?</div>
             <RestoreFromGoogle onRestored={onDone} />

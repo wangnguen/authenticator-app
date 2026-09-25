@@ -5,14 +5,18 @@ App quản lý mã 2FA (TOTP) cho Windows gồm **app desktop** (Tauri v2 + Reac
 
 ```
 authenticator-app/
+├── assets/            # file gốc của logo (icon.svg); `pnpm icons` tạo lại mọi icon
 ├── packages/
 │   ├── core/          # types, protocol native messaging, hàm format (TS)
 │   └── ui/            # React components, hook useCodes, đọc QR, CSS dùng chung
 ├── desktop/           # Tauri v2
 │   ├── src/           # frontend React
 │   └── src-tauri/     # backend Rust: TOTP, vault mã hoá, named pipe, native host
-└── extension/         # Chrome/Edge MV3, build ra extension/dist
+├── extension/         # Chrome/Edge MV3, build ra extension/dist
+└── docs/              # website GitHub Pages (trang chủ, chính sách bảo mật, điều khoản)
 ```
+
+**Đổi logo:** thay `assets/icon.svg` rồi chạy `pnpm icons` (chi tiết: [assets/README.md](assets/README.md)).
 
 ## Yêu cầu
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { errorMessage, type BackupInfo, type GoogleProfile } from "@auth/core";
+import { Icon } from "@auth/ui";
 import { api } from "../api";
 
 interface Props {
@@ -137,7 +138,7 @@ export function GoogleAccountMenu({ hasPassword, onRestored }: Props) {
         </button>
       ) : (
         <button
-          className="auth-btn google-icon-btn"
+          className="auth-btn auth-btn--icon google-icon-btn"
           onClick={signIn}
           disabled={busy === "signin"}
           title={busy === "signin" ? "Đang chờ đăng nhập trên trình duyệt…" : "Đăng nhập Google"}
@@ -170,11 +171,23 @@ export function GoogleAccountMenu({ hasPassword, onRestored }: Props) {
                     : "Vault không mật khẩu: bản sao lưu là JSON không mã hoá, ai mở được file trên Drive cũng thấy secret"
                 }
               >
-                {busy === "backup" ? "Đang sao lưu…" : "☁ Sao lưu lên Google Drive"}
+                {busy === "backup" ? (
+                  "Đang sao lưu…"
+                ) : (
+                  <>
+                    <Icon name="cloud-upload" /> Sao lưu lên Google Drive
+                  </>
+                )}
               </button>
 
               <button className="auth-btn" onClick={openFolder} disabled={busy !== null}>
-                {busy === "folder" ? "Đang mở…" : "📂 Mở thư mục trên Drive"}
+                {busy === "folder" ? (
+                  "Đang mở…"
+                ) : (
+                  <>
+                    <Icon name="folder-open" /> Mở thư mục trên Drive
+                  </>
+                )}
               </button>
 
               {confirmRestore ? (
@@ -202,7 +215,7 @@ export function GoogleAccountMenu({ hasPassword, onRestored }: Props) {
                   onClick={() => setConfirmRestore(true)}
                   disabled={busy !== null || !backup?.modifiedTime}
                 >
-                  ⤓ Khôi phục từ Google Drive
+                  <Icon name="download" /> Khôi phục từ Google Drive
                 </button>
               )}
             </>

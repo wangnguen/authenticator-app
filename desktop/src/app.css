@@ -57,33 +57,28 @@ h3 {
   gap: 6px;
 }
 
-.panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--auth-border);
-  border-radius: var(--auth-radius);
-  background: var(--auth-surface);
-}
-
-.panel p {
+.dialog p {
   margin: 0;
 }
 
-.panel dl {
+/* Bảng "nhãn: giá trị" (ví dụ Extension ID) trong modal. */
+.info-list {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 4px 12px;
   margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--auth-border);
+  border-radius: var(--auth-radius);
+  background: var(--auth-surface);
   font-size: 12px;
 }
 
-.panel dt {
+.info-list dt {
   color: var(--auth-muted);
 }
 
-.panel dd {
+.info-list dd {
   margin: 0;
   word-break: break-all;
 }
@@ -100,16 +95,7 @@ h3 {
   gap: 8px;
 }
 
-/* Nút đăng nhập chỉ có logo G, cùng cỡ với các nút icon khác trên thanh công cụ. */
-.google-icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 36px;
-  padding: 0;
-}
-
+/* Logo G trong nút đăng nhập (nút dùng .auth-btn--icon như các nút icon khác). */
 .google-icon-btn .google-logo {
   width: 18px;
   height: 18px;
@@ -264,6 +250,15 @@ h3 {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* Nút thao tác phụ (ví dụ "Bỏ mật khẩu") nằm bên trái, tách khỏi Đóng / Lưu. */
+.dialog__action-left {
+  margin-right: auto;
+}
+
+.security-status {
+  margin: 0;
 }
 
 .tabs {

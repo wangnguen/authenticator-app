@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react";
 import { errorMessage } from "@auth/core";
-import { CodeList, SearchBox, useCodes } from "@auth/ui";
+import { CodeList, Icon, SearchBox, useCodes } from "@auth/ui";
 import { api } from "../api";
 import { AddAccountDialog } from "./AddAccountDialog";
-import { ExtensionPanel } from "./ExtensionPanel";
+import { ExtensionDialog } from "./ExtensionDialog";
 import { GoogleAccountMenu } from "./GoogleAccountMenu";
-import { SecurityPanel } from "./SecurityPanel";
-
-type Panel = "extension" | "security" | null;
+import { SecurityDialog } from "./SecurityDialog";
 
 interface Props {
   /** false: vault không mật khẩu, ẩn nút khoá vì mở lại không cần gì. */
@@ -20,8 +18,8 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
   const { entries, error, loading, now, refresh } = useCodes(api.listCodes);
   const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
-  const [panel, setPanel] = useState<Panel>(null);
-  const togglePanel = (next: Panel) => setPanel((p) => (p === next ? null : next));
+  const [extensionOpen, setExtensionOpen] = useState(false);
+  const [securityOpen, setSecurityOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -57,25 +55,25 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
         <h1>Authenticator</h1>
         <div className="toolbar__actions">
           <button className="auth-btn auth-btn--primary" onClick={() => setAdding(true)}>
-            + Thêm
+            <Icon name="plus" /> Thêm
           </button>
           <button
-            className="auth-btn"
-            onClick={() => togglePanel("extension")}
+            className="auth-btn auth-btn--icon"
+            onClick={() => setExtensionOpen(true)}
             title="Kết nối extension"
           >
-            🧩
+            <Icon name="puzzle" size={18} />
           </button>
           <button
-            className="auth-btn"
-            onClick={() => togglePanel("security")}
+            className="auth-btn auth-btn--icon"
+            onClick={() => setSecurityOpen(true)}
             title="Bảo mật"
           >
-            ⚙
+            <Icon name="settings" size={18} />
           </button>
           {hasPassword && (
-            <button className="auth-btn" onClick={onLock} title="Khoá vault">
-              🔒
+            <button className="auth-btn auth-btn--icon" onClick={onLock} title="Khoá vault">
+              <Icon name="lock" size={18} />
             </button>
           )}
           <GoogleAccountMenu
@@ -88,11 +86,6 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
           />
         </div>
       </header>
-
-      {panel === "extension" && <ExtensionPanel />}
-      {panel === "security" && (
-        <SecurityPanel hasPassword={hasPassword} onChanged={onSecurityChanged} />
-      )}
 
       <SearchBox value={query} onChange={setQuery} />
 
@@ -114,6 +107,16 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
               {confirmDelete === entry.id ? "Xác nhận?" : "Xoá"}
             </button>
           )}
+        />
+      )}
+
+      {extensionOpen && <ExtensionDialog onClose={() => setExtensionOpen(false)} />}
+
+      {securityOpen && (
+        <SecurityDialog
+          hasPassword={hasPassword}
+          onChanged={onSecurityChanged}
+          onClose={() => setSecurityOpen(false)}
         />
       )}
 

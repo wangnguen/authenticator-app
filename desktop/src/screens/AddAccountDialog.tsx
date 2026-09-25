@@ -12,7 +12,7 @@ import {
   type ImportPreview,
   type NewAccount,
 } from "@auth/core";
-import { scanOtpQrImages, type QrScanResult } from "@auth/ui";
+import { Icon, type QrScanResult, scanOtpQrImages } from "@auth/ui";
 import { api } from "../api";
 import { ImportPreviewDialog } from "./ImportPreviewDialog";
 
@@ -224,7 +224,13 @@ export function AddAccountDialog({ onClose, onAdded }: Props) {
               )}
             </div>
             <label className={busy ? "auth-btn file-btn file-btn--busy" : "auth-btn file-btn"}>
-              {busy ? "Đang đọc QR..." : "📷 Chọn ảnh QR (chọn được nhiều ảnh)"}
+              {busy ? (
+                "Đang đọc QR..."
+              ) : (
+                <>
+                  <Icon name="camera" /> Chọn ảnh QR (chọn được nhiều ảnh)
+                </>
+              )}
               <input
                 type="file"
                 accept="image/*"

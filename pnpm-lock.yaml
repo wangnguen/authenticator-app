@@ -106,6 +106,9 @@ importers:
       react:
         specifier: ^19.1.0
         version: 19.3.0
+      vite:
+        specifier: ^7.3.6
+        version: 7.3.6(@types/node@26.6.2)
       vitest:
         specifier: ^3.2.7
         version: 3.2.7(@types/node@26.6.2)
