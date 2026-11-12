@@ -87,6 +87,8 @@ export interface SyncPreview {
   /** Phiên bản (thời điểm sửa) của bản sao lưu đã xem; null: chưa có bản nào. */
   backupVersion: string | null;
   backupExists: boolean;
+  /** Máy này và Drive đã giống nhau (tự đồng bộ thì bỏ qua). */
+  inSync: boolean;
   /** Tài khoản sẽ được thêm vào máy này. */
   added: AccountSummary[];
   /** Tài khoản chỉ có trên máy này, sẽ được đưa lên bản sao lưu. */
@@ -153,7 +155,27 @@ export type ErrorCode =
   | "NO_BACKUP"
   | "BACKUP_PASSWORD"
   | "BACKUP_CHANGED"
+  | "NOT_PAIRED"
+  | "PAIR_EXPIRED"
+  | "PAIR_BUSY"
+  | "NETWORK"
+  | "GOOGLE_API"
+  | "GOOGLE_AUTH"
+  | "GOOGLE_CANCELLED"
+  | "GOOGLE_NOT_CONFIGURED"
+  | "GOOGLE_SESSION_EXPIRED"
+  | "GOOGLE_SIGNED_OUT"
+  | "GOOGLE_TIMEOUT"
   | "INTERNAL";
+
+/** Extension đã được cho phép lấy mã (không có token). */
+export interface PairedExtension {
+  id: string;
+  name: string;
+  /** Unix ms. */
+  createdAt: number;
+  lastUsedAt: number;
+}
 
 export function isAppError(value: unknown): value is AppError {
   return (

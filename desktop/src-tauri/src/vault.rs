@@ -152,6 +152,8 @@ pub struct SyncPreview {
     /// Thời điểm sửa của bản sao lưu đã xem trước (`None`: chưa có bản nào).
     pub backup_version: Option<String>,
     pub backup_exists: bool,
+    /// Máy này và Drive đã giống nhau, đồng bộ không thay đổi gì (tự đồng bộ thì bỏ qua).
+    pub in_sync: bool,
     /// Tài khoản sẽ được thêm vào máy này.
     pub added: Vec<AccountSummary>,
     /// Tài khoản chỉ có trên máy này, sẽ được đưa lên bản sao lưu.
@@ -640,6 +642,12 @@ impl Vault {
         let empty = VaultData::default();
         let merge = Merge::compute(&unlocked.data, remote.data().unwrap_or(&empty));
         let pending_deletions = merge.pending();
+        let added = merge.added.clone();
+        let uploaded = merge.uploaded.clone();
+        let in_sync = pending_deletions.is_empty() && {
+            let (merged, _) = merge.resolve(&[], now_ms());
+            self.in_sync(remote, &merged)?
+        };
         let mut warnings = Vec::new();
         if let (Protection::Password(_), Remote::Encrypted { same_as_local: false, .. }) =
             (&unlocked.protection, remote)
@@ -654,8 +662,9 @@ impl Vault {
         Ok(SyncPreview {
             backup_version,
             backup_exists: !matches!(remote, Remote::Missing),
-            added: merge.added,
-            uploaded: merge.uploaded,
+            in_sync,
+            added,
+            uploaded,
             pending_deletions,
             warnings,
         })
@@ -674,7 +683,7 @@ impl Vault {
         let empty = VaultData::default();
         let (data, summary) = Merge::compute(&unlocked.data, remote.data().unwrap_or(&empty))
             .resolve(confirmed, now_ms());
-        let changed = serde_json::to_vec(&sorted(&unlocked.data))? != serde_json::to_vec(&data)?;
+        let changed = !same_data(&data, &unlocked.data)?;
 
         if changed || shared_key.is_some() {
             self.snapshot()?;
@@ -687,6 +696,25 @@ impl Vault {
             self.save()?;
         }
         Ok((summary, self.upload_bytes(remote)?))
+    }
+
+    /// Kết quả gộp giống hệt cả vault trên máy lẫn bản trên Drive, và bản trên Drive đã được bảo
+    /// vệ đúng như khi tải lên (vault có mật khẩu thì bản trên Drive dùng cùng key).
+    fn in_sync(&self, remote: &Remote, merged: &VaultData) -> AppResult<bool> {
+        let unlocked = self.unlocked()?;
+        let local = &unlocked.data;
+        let protected = match (&unlocked.protection, remote) {
+            (_, Remote::Missing) => {
+                return Ok(local.accounts.is_empty() && local.deleted.is_empty());
+            }
+            (Protection::Password(_), Remote::Encrypted { same_as_local, .. }) => *same_as_local,
+            (Protection::Password(_), Remote::Plain(_)) => false,
+            (Protection::Device(_), _) => true,
+        };
+        let Some(remote_data) = remote.data() else {
+            return Ok(false);
+        };
+        Ok(protected && same_data(merged, local)? && same_data(merged, remote_data)?)
     }
 
     /// Hai máy đặt cùng master password nhưng khác salt: trả key + salt của bản sao lưu để máy
@@ -1054,12 +1082,12 @@ impl Vault {
     }
 }
 
-/// Bản sao sắp theo id, để so sánh với kết quả gộp.
-fn sorted(data: &VaultData) -> VaultData {
-    let mut data = data.clone();
-    data.accounts.sort_by(|a, b| a.id.cmp(&b.id));
-    data.deleted.sort_by(|a, b| a.id.cmp(&b.id));
-    data
+/// Kết quả gộp (đã sắp theo id) có giống `other` không, bỏ qua thứ tự của `other`.
+fn same_data(merged: &VaultData, other: &VaultData) -> AppResult<bool> {
+    let mut other = other.clone();
+    other.accounts.sort_by(|a, b| a.id.cmp(&b.id));
+    other.deleted.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(serde_json::to_vec(merged)? == serde_json::to_vec(&other)?)
 }
 
 fn check_password(password: &str) -> AppResult<()> {
@@ -1188,6 +1216,17 @@ mod tests {
         sync(&mut b, &mut drive, &[]);
         assert_eq!(a.codes().unwrap().len(), 3);
         assert_eq!(b.codes().unwrap().len(), 3);
+        let remote = a.read_remote(drive.as_deref(), None).unwrap();
+        assert!(a.sync_preview(&remote, None, None).unwrap().in_sync);
+        b.add(account_with("DDDDDDDD")).unwrap();
+        let remote = b.read_remote(drive.as_deref(), None).unwrap();
+        assert!(!b.sync_preview(&remote, None, None).unwrap().in_sync);
+        sync(&mut b, &mut drive, &[]);
+        sync(&mut a, &mut drive, &[]);
+        let id = b.codes().unwrap().iter().find(|c| c.issuer == "Issuer DDDDDDDD").unwrap().id.clone();
+        b.remove(&id).unwrap();
+        sync(&mut b, &mut drive, std::slice::from_ref(&id));
+        sync(&mut a, &mut drive, std::slice::from_ref(&id));
 
         // B xoá một tài khoản: A không tự xoá mà chờ xác nhận.
         let removed = b.codes().unwrap()[0].id.clone();

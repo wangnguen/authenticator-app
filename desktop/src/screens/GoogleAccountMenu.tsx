@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   errorMessage,
   isAppError,
@@ -18,7 +18,21 @@ interface Props {
   onRestored: () => void;
   /** Gọi sau khi đồng bộ xong để tải lại danh sách mã và Thùng rác. */
   onSynced: () => void;
+  /** Tăng mỗi khi vault trên máy thay đổi (thêm/xoá/khôi phục): tự đồng bộ sau vài giây. */
+  changeCount: number;
+  /** Tăng khi người dùng bấm "Xem" trên thanh báo đồng bộ. */
+  attentionRequest: number;
+  /** Báo cho màn hình chính hiện (hoặc ẩn khi null) thanh báo đồng bộ cần người dùng xử lý. */
+  onAttention: (text: string | null) => void;
 }
+
+/** Chờ sau thay đổi cuối cùng rồi mới tự đồng bộ (gộp nhiều thay đổi liên tiếp). */
+const AUTO_SYNC_DELAY_MS = 2000;
+/** Tự đồng bộ định kỳ để nhận thay đổi từ máy khác khi app chạy nền. */
+const AUTO_SYNC_INTERVAL_MS = 15 * 60 * 1000;
+
+/** Việc cần người dùng làm: mở hộp thoại đồng bộ, hoặc đăng nhập lại Google. */
+type Attention = { text: string; action: "sync" | "signin" } | null;
 
 type Busy = "signin" | "folder" | "restore-check" | "restore" | "signout" | null;
 
@@ -69,7 +83,14 @@ function Avatar({ profile }: { profile: GoogleProfile }) {
 }
 
 /** Nút đăng nhập Google ở góc phải; đăng nhập rồi thì là avatar mở menu sao lưu. */
-export function GoogleAccountMenu({ hasPassword, onRestored, onSynced }: Props) {
+export function GoogleAccountMenu({
+  hasPassword,
+  onRestored,
+  onSynced,
+  changeCount,
+  attentionRequest,
+  onAttention,
+}: Props) {
   const [profile, setProfile] = useState<GoogleProfile | null | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<Busy>(null);
@@ -77,7 +98,97 @@ export function GoogleAccountMenu({ hasPassword, onRestored, onSynced }: Props) 
   const [message, setMessage] = useState<Message>(null);
   const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [attention, setAttentionState] = useState<Attention>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // Callback của màn hình cha đổi mỗi lần render: giữ trong ref để tự đồng bộ không chạy lại vô cớ.
+  const callbacks = useRef({ onSynced, onAttention });
+  callbacks.current = { onSynced, onAttention };
+  const syncingRef = useRef(syncing);
+  syncingRef.current = syncing;
+  const autoRunning = useRef(false);
+
+  const setAttention = useCallback((next: Attention) => {
+    setAttentionState(next);
+    callbacks.current.onAttention(next?.text ?? null);
+  }, []);
+
+  /**
+   * Tự đồng bộ: chỉ chạy khi không có gì phải hỏi. Tài khoản chính máy này đã xoá thì đồng bộ luôn
+   * (người dùng đã xác nhận lúc bấm Xoá); tài khoản bị xoá ở máy khác hoặc cảnh báo về mật khẩu
+   * thì hiện thanh báo để người dùng tự mở hộp thoại xác nhận.
+   */
+  const autoSync = useCallback(async () => {
+    if (syncingRef.current || autoRunning.current) return;
+    autoRunning.current = true;
+    try {
+      const preview = await api.googleSyncPreview(null);
+      if (preview.inSync) {
+        setAttention(null);
+        return;
+      }
+      const fromOther = preview.pendingDeletions.filter((d) => d.side === "local");
+      if (fromOther.length > 0 || preview.warnings.length > 0) {
+        setAttention({
+          text:
+            fromOther.length > 0
+              ? `${fromOther.length} tài khoản đã bị xoá ở máy khác. Cần bạn xác nhận trước khi đồng bộ.`
+              : "Đồng bộ với Google Drive cần bạn xem lại trước khi tiếp tục.",
+          action: "sync",
+        });
+        return;
+      }
+      const ownDeletions = preview.pendingDeletions.map((d) => d.id);
+      const result = await api.googleSync(null, ownDeletions, preview.backupVersion);
+      setBackup(result.backup);
+      setAttention(null);
+      // Gộp có thể đổi cả Thùng rác hay tài khoản đang có, không chỉ thêm mới: luôn tải lại.
+      callbacks.current.onSynced();
+    } catch (e) {
+      if (!isAppError(e)) return;
+      if (e.code === "BACKUP_PASSWORD") {
+        setAttention({
+          text: "Bản sao lưu trên Drive dùng master password khác. Mở đồng bộ để nhập mật khẩu.",
+          action: "sync",
+        });
+      } else if (e.code === "GOOGLE_SESSION_EXPIRED" || e.code === "GOOGLE_SIGNED_OUT") {
+        // App đã tự đăng xuất phiên hỏng: hiện lại nút đăng nhập.
+        setProfile(null);
+        setAttention({ text: `${e.message} Đồng bộ tạm dừng.`, action: "signin" });
+      }
+      // Lỗi mạng, máy khác vừa ghi (BACKUP_CHANGED)...: im lặng, lần sau thử lại.
+    } finally {
+      autoRunning.current = false;
+    }
+  }, [setAttention]);
+
+  // Mở app và sau mỗi thay đổi trên máy.
+  useEffect(() => {
+    if (!profile) return;
+    const timer = setTimeout(() => void autoSync(), changeCount === 0 ? 0 : AUTO_SYNC_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [profile, changeCount, autoSync]);
+
+  // Định kỳ, để nhận thay đổi từ máy khác khi app chạy nền ở tray.
+  useEffect(() => {
+    if (!profile) return;
+    const timer = setInterval(() => void autoSync(), AUTO_SYNC_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [profile, autoSync]);
+
+  // Người dùng bấm "Xem" trên thanh báo.
+  const attentionRef = useRef(attention);
+  attentionRef.current = attention;
+  useEffect(() => {
+    if (attentionRequest === 0) return;
+    if (attentionRef.current?.action === "signin") {
+      void signIn();
+    } else {
+      setOpen(false);
+      setMessage(null);
+      setSyncing(true);
+    }
+  }, [attentionRequest]);
 
   useEffect(() => {
     api.googleAccount().then(setProfile, () => setProfile(null));
@@ -120,12 +231,14 @@ export function GoogleAccountMenu({ hasPassword, onRestored, onSynced }: Props) 
   const signIn = () =>
     run("signin", async () => {
       setProfile(await api.googleSignIn());
+      setAttention(null);
       setOpen(true);
       return "Đã đăng nhập Google.";
     });
 
   const synced = (result: SyncResult) => {
     setSyncing(false);
+    setAttention(null);
     setBackup(result.backup);
     setMessage({ kind: "success", text: syncMessage(result) });
     setOpen(true);
@@ -157,6 +270,7 @@ export function GoogleAccountMenu({ hasPassword, onRestored, onSynced }: Props) 
   const signOut = () =>
     run("signout", async () => {
       await api.googleSignOut();
+      setAttention(null);
       setProfile(null);
       setBackup(null);
       setOpen(false);
@@ -170,9 +284,10 @@ export function GoogleAccountMenu({ hasPassword, onRestored, onSynced }: Props) 
         <button
           className="avatar-btn"
           onClick={() => setOpen((v) => !v)}
-          title={`${profile.name} (${profile.email})`}
+          title={attention ? attention.text : `${profile.name} (${profile.email})`}
         >
           <Avatar profile={profile} />
+          {attention && <span className="avatar-dot" />}
         </button>
       ) : (
         <button

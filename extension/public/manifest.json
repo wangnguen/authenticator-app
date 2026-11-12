@@ -20,5 +20,5 @@
     "48": "icons/48x48.png",
     "128": "icons/128x128.png"
   },
-  "permissions": ["nativeMessaging", "activeTab", "scripting"]
+  "permissions": ["nativeMessaging", "activeTab", "scripting", "storage"]
 }

@@ -60,6 +60,23 @@ có nút cài (build.rs in cảnh báo).
 App desktop **tự đăng ký native messaging host** (HKCU, không cần quyền admin) mỗi lần khởi động.
 Nếu Chrome/Edge đang mở từ trước thì nên mở lại extension popup sau khi app chạy.
 
+**Chạy nền ở khay hệ thống (Windows):** đóng cửa sổ chỉ ẩn app xuống tray (cạnh đồng hồ) để
+extension luôn lấy được mã. Bấm icon để mở lại; menu chuột phải có **Khoá vault** và **Thoát**.
+Không tạo được icon tray thì đóng cửa sổ là thoát như bình thường.
+
+### Ghép đôi extension (`src-tauri/src/pairing.rs`)
+
+Extension ID cố định nhờ `key` công khai trong manifest, nên extension khác (hoặc tiến trình khác
+mở named pipe) có thể giả danh. Vì vậy mỗi extension phải được cho phép một lần:
+
+1. Popup extension bấm **Kết nối với app** → hiện mã 6 số.
+2. App desktop bật lên (kể cả khi đang ẩn ở tray) hỏi **Cho phép / Từ chối** kèm cùng mã đó.
+3. Được cho phép thì extension nhận token (lưu trong `chrome.storage.local`) và gửi kèm mọi
+   request; thiếu/sai token thì app trả `NOT_PAIRED`. App chỉ lưu SHA-256 của token trong
+   `paired-extensions.json`.
+
+Danh sách extension đã cho phép (và nút **Thu hồi**) nằm trong 🧩 **Kết nối extension**.
+
 ## Đăng nhập Google (đồng bộ qua Google Drive)
 
 Nút **Đăng nhập Google** (logo G ở góc phải) dùng để đồng bộ / khôi phục vault qua thư mục
@@ -77,7 +94,10 @@ App dùng scope `drive.file`: chỉ thấy file do chính nó tạo, không đ�
 ### Đồng bộ nhiều máy (`src-tauri/src/sync.rs`)
 
 **Đồng bộ với Google Drive** tải bản trên Drive về, gộp với vault trên máy rồi tải bản đã gộp lên.
-Gộp theo `id` của từng tài khoản:
+Khi đã đăng nhập Google, app **tự đồng bộ** lúc mở, vài giây sau mỗi lần thêm/xoá/khôi phục tài
+khoản, và mỗi 15 phút (kể cả khi chạy nền). Tự đồng bộ chỉ chạy khi không có gì phải hỏi; có tài
+khoản bị xoá ở máy khác, cần master password của bản sao lưu hoặc phiên Google hết hạn thì app hiện
+thanh báo (và chấm vàng trên avatar) để bạn bấm **Xem**. Gộp theo `id` của từng tài khoản:
 
 - Tài khoản chỉ có ở một bên → thêm vào bên kia.
 - Tài khoản bị xoá ở một bên → **không tự xoá**: hộp thoại liệt kê từng tài khoản để đánh dấu xoá.
@@ -232,7 +252,9 @@ Extension popup ──connectNative──▶ authenticator.exe (chế độ nati
   Key lấy từ master password (Argon2id), hoặc nếu không đặt mật khẩu thì là key ngẫu nhiên được
   **Windows DPAPI** khoá theo tài khoản Windows (tự mở khoá khi mở app; file không mở được trên
   máy/user khác). Key chỉ nằm trong RAM khi vault mở và bị zeroize khi khoá.
-- Protocol extension ↔ app (`packages/core/src/protocol.ts`): `ping`, `status`, `list_codes`, `add_uri` (nhận cả `otpauth-migration://`).
+- Protocol extension ↔ app (`packages/core/src/protocol.ts`): `ping`, `pair_request`, `pair_status`,
+  `status`, `list_codes`, `add_uri` (nhận cả `otpauth-migration://`). Trừ `ping` và hai lệnh ghép
+  đôi, mọi lệnh cần token ghép đôi.
 
 ## Tính năng
 
@@ -258,8 +280,5 @@ pnpm typecheck
 ## Hướng phát triển tiếp
 
 - Tự khoá vault sau một khoảng thời gian không dùng
-- Tự đồng bộ với Google Drive khi mở app và sau khi thêm/xoá tài khoản (chỉ tự chạy khi không có
-  gì cần xác nhận)
-- Xác nhận trong app desktop khi extension lần đầu xin mã (pairing)
 - Xoá registry key native host khi gỡ cài đặt (NSIS uninstall hook)
-- System tray: chạy ẩn khi đóng cửa sổ để extension luôn kết nối được
+- Tuỳ chọn khởi động cùng Windows (ẩn sẵn ở tray)

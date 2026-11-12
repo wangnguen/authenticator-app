@@ -3,6 +3,7 @@
 use crate::browser_extension::{self, Browser, ExtensionPackage};
 use crate::error::{AppError, AppResult};
 use crate::google::{BackupInfo, Google, GoogleProfile};
+use crate::pairing::{PairRequest, PairedClient, SharedPairing};
 use crate::register::ExtensionInfo;
 use crate::sync::SyncSummary;
 use crate::vault::{
@@ -279,4 +280,31 @@ pub fn open_extension_folder(app: AppHandle) -> AppResult<()> {
     app.opener()
         .open_path(path, None::<&str>)
         .map_err(AppError::internal)
+}
+
+/// Yêu cầu ghép đôi extension đang chờ (giao diện hiện lại nếu lỡ sự kiện `pair-request`).
+#[tauri::command]
+pub fn pairing_pending(pairing: State<'_, SharedPairing>) -> AppResult<Option<PairRequest>> {
+    pairing.pending()
+}
+
+/// Cho phép / từ chối extension xin kết nối.
+#[tauri::command]
+pub fn pairing_decide(
+    pairing: State<'_, SharedPairing>,
+    request_id: String,
+    approve: bool,
+) -> AppResult<()> {
+    pairing.decide(&request_id, approve)
+}
+
+#[tauri::command]
+pub fn paired_extensions(pairing: State<'_, SharedPairing>) -> AppResult<Vec<PairedClient>> {
+    pairing.clients()
+}
+
+/// Thu hồi quyền của một extension đã ghép đôi (extension phải xin kết nối lại).
+#[tauri::command]
+pub fn revoke_extension(pairing: State<'_, SharedPairing>, id: String) -> AppResult<()> {
+    pairing.revoke(&id)
 }

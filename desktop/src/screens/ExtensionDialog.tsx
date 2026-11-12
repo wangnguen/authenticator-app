@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { errorMessage } from "@auth/core";
+import { errorMessage, type PairedExtension } from "@auth/core";
 import { Icon } from "@auth/ui";
 import { api, type BrowserName, type ExtensionInfo, type ExtensionPackage } from "../api";
+import { PAIRED_EVENT } from "./PairDialog";
 
 interface Props {
   onClose: () => void;
@@ -20,11 +21,35 @@ export function ExtensionDialog({ onClose }: Props) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paired, setPaired] = useState<PairedExtension[] | null>(null);
+  const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
+
+  const loadPaired = () =>
+    api.pairedExtensions().then(setPaired, (e) => setError(errorMessage(e)));
 
   useEffect(() => {
     void api.extensionInfo().then(setInfo);
     void api.extensionPackage().then(setPkg, (e) => setError(errorMessage(e)));
+    void loadPaired();
+    // Vừa cho phép một extension trong lúc hộp thoại đang mở.
+    const onPaired = () => void loadPaired();
+    window.addEventListener(PAIRED_EVENT, onPaired);
+    return () => window.removeEventListener(PAIRED_EVENT, onPaired);
   }, []);
+
+  const revoke = async (id: string) => {
+    if (confirmRevoke !== id) {
+      setConfirmRevoke(id);
+      return;
+    }
+    try {
+      await api.revokeExtension(id);
+      setConfirmRevoke(null);
+      await loadPaired();
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  };
 
   // Esc để đóng.
   useEffect(() => {
@@ -86,9 +111,39 @@ export function ExtensionDialog({ onClose }: Props) {
               <dd className="mono">{info.hostName}</dd>
             </dl>
             <p className="auth-muted hint">
-              Giữ app này chạy để extension lấy được mã. Mã chỉ trả về khi vault đang mở khoá.
+              App chạy nền ở khay hệ thống (cạnh đồng hồ) để extension luôn lấy được mã. Mã chỉ trả
+              về khi vault đang mở khoá.
             </p>
           </>
+        )}
+
+        <h3>Extension đã được cho phép</h3>
+        {paired && paired.length === 0 ? (
+          <p className="auth-muted hint">
+            Chưa có. Mở popup extension, bấm <strong>Kết nối với app</strong> rồi cho phép ở đây.
+          </p>
+        ) : (
+          <ul className="paired-list">
+            {paired?.map((client) => (
+              <li key={client.id} className="preview-item">
+                <div className="preview-item__name">
+                  <strong>{client.name}</strong>
+                  <span className="auth-muted">
+                    Cho phép lúc {new Date(client.createdAt).toLocaleString("vi-VN")} · dùng gần
+                    nhất {new Date(client.lastUsedAt).toLocaleDateString("vi-VN")}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="auth-btn auth-btn--small auth-btn--danger"
+                  onClick={() => void revoke(client.id)}
+                  onBlur={() => setConfirmRevoke(null)}
+                >
+                  {confirmRevoke === client.id ? "Chắc chắn?" : "Thu hồi"}
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
 
         <h3>Cài extension vào trình duyệt</h3>

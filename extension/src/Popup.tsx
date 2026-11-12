@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { describeImport, errorMessage, type VaultStatus } from "@auth/core";
+import { describeImport, errorMessage, isAppError, type VaultStatus } from "@auth/core";
 import { CodeList, Icon, SearchBox, useCodes } from "@auth/ui";
-import { native } from "./native";
+import { loadToken, native, NativeError, saveToken } from "./native";
+import { Pairing } from "./Pairing";
 import { fillCode, scanQrOnPage } from "./page";
 
 type Notice = { kind: "success" | "error"; text: string } | null;
@@ -11,14 +12,25 @@ const listCodes = () => native.request({ type: "list_codes" });
 export function Popup() {
   const [status, setStatus] = useState<VaultStatus | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
+  /** null: đã ghép đôi; "new": chưa ghép đôi; "revoked": token cũ bị app thu hồi. */
+  const [pairing, setPairing] = useState<"new" | "revoked" | null>(null);
 
   const checkStatus = useCallback(async () => {
     setConnectError(null);
     try {
+      await loadToken();
       setStatus(await native.request({ type: "status" }));
+      setPairing(null);
     } catch (e) {
       setStatus(null);
-      setConnectError(errorMessage(e));
+      const code = e instanceof NativeError ? e.code : isAppError(e) ? e.code : null;
+      if (code === "NOT_PAIRED") {
+        const hadToken = native.hasToken();
+        await saveToken(null);
+        setPairing(hadToken ? "revoked" : "new");
+      } else {
+        setConnectError(errorMessage(e));
+      }
     }
   }, []);
 
@@ -27,7 +39,9 @@ export function Popup() {
   }, [checkStatus]);
 
   let body;
-  if (connectError) {
+  if (pairing) {
+    body = <Pairing revoked={pairing === "revoked"} onPaired={() => void checkStatus()} />;
+  } else if (connectError) {
     body = <Message text={connectError} onRetry={checkStatus} />;
   } else if (!status) {
     body = <p className="auth-empty">Đang kết nối app desktop...</p>;

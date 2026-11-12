@@ -38,6 +38,8 @@ function disconnectError(reason: string): NativeError {
  */
 class NativeClient {
   private port: chrome.runtime.Port | null = null;
+  /** Token ghép đôi, gửi kèm mọi request. */
+  private token: string | null = null;
   private nextId = 1;
   private pending = new Map<number, Pending>();
 
@@ -67,6 +69,14 @@ class NativeClient {
     return port;
   }
 
+  setToken(token: string | null) {
+    this.token = token;
+  }
+
+  hasToken(): boolean {
+    return this.token !== null;
+  }
+
   request<C extends NativeCommand>(command: C): Promise<NativeResultMap[C["type"]]> {
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
@@ -80,7 +90,7 @@ class NativeClient {
         timer,
       });
       try {
-        this.connect().postMessage({ ...command, id });
+        this.connect().postMessage({ ...command, id, ...(this.token ? { token: this.token } : {}) });
       } catch (e) {
         clearTimeout(timer);
         this.pending.delete(id);
@@ -91,3 +101,17 @@ class NativeClient {
 }
 
 export const native = new NativeClient();
+
+const TOKEN_KEY = "pairToken";
+
+/** Nạp token đã lưu (nếu có) vào client. */
+export async function loadToken(): Promise<void> {
+  const stored = await chrome.storage.local.get(TOKEN_KEY);
+  native.setToken(typeof stored[TOKEN_KEY] === "string" ? stored[TOKEN_KEY] : null);
+}
+
+export async function saveToken(token: string | null): Promise<void> {
+  native.setToken(token);
+  if (token) await chrome.storage.local.set({ [TOKEN_KEY]: token });
+  else await chrome.storage.local.remove(TOKEN_KEY);
+}

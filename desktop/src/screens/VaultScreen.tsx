@@ -23,6 +23,11 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
   const [securityOpen, setSecurityOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [trashCount, setTrashCount] = useState(0);
+  /** Tăng khi vault trên máy đổi do người dùng hoặc extension: kích hoạt tự đồng bộ. */
+  const [changeCount, setChangeCount] = useState(0);
+  const [syncAttention, setSyncAttention] = useState<string | null>(null);
+  const [attentionRequest, setAttentionRequest] = useState(0);
+  const changed = useCallback(() => setChangeCount((n) => n + 1), []);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -48,9 +53,12 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
   }, [refreshTrash]);
 
   useEffect(() => {
-    const unlisten = api.onVaultChanged(() => void reload());
+    const unlisten = api.onVaultChanged(() => {
+      void reload();
+      changed();
+    });
     return () => void unlisten.then((fn) => fn());
-  }, [reload]);
+  }, [reload, changed]);
 
   const remove = async (id: string) => {
     if (confirmDelete !== id) {
@@ -62,6 +70,7 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
       await api.deleteAccount(id);
       setConfirmDelete(null);
       setNotice(`Đã chuyển ${entry?.issuer || entry?.label || "tài khoản"} vào Thùng rác.`);
+      changed();
       await reload();
     } catch (e) {
       setActionError(errorMessage(e));
@@ -103,9 +112,24 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
               void reload();
             }}
             onSynced={() => void reload()}
+            changeCount={changeCount}
+            attentionRequest={attentionRequest}
+            onAttention={setSyncAttention}
           />
         </div>
       </header>
+
+      {syncAttention && (
+        <div className="sync-banner">
+          <span>⚠ {syncAttention}</span>
+          <button
+            className="auth-btn auth-btn--small"
+            onClick={() => setAttentionRequest((n) => n + 1)}
+          >
+            Xem
+          </button>
+        </div>
+      )}
 
       <SearchBox value={query} onChange={setQuery} />
 
@@ -140,7 +164,15 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
         </button>
       )}
 
-      {trashOpen && <TrashDialog onClose={() => setTrashOpen(false)} onChanged={() => void reload()} />}
+      {trashOpen && (
+        <TrashDialog
+          onClose={() => setTrashOpen(false)}
+          onChanged={() => {
+            changed();
+            void reload();
+          }}
+        />
+      )}
 
       {extensionOpen && <ExtensionDialog onClose={() => setExtensionOpen(false)} />}
 
@@ -158,6 +190,7 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
           onAdded={(message) => {
             setAdding(false);
             setNotice(message);
+            changed();
             void refresh();
           }}
         />

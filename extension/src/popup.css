@@ -36,3 +36,15 @@ body {
 .popup__message p {
   margin: 0;
 }
+
+/* Mã xác nhận khi ghép đôi với app desktop. */
+.pair-code {
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+
+.hint {
+  font-size: 12px;
+}

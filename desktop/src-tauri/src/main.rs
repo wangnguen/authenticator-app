@@ -11,6 +11,7 @@ mod ipc;
 mod migration;
 mod native_host;
 mod otpauth;
+mod pairing;
 mod register;
 mod sync;
 mod totp;

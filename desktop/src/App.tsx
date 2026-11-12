@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { errorMessage, type VaultStatus } from "@auth/core";
 import { api } from "./api";
+import { PairDialog } from "./screens/PairDialog";
 import { PasswordScreen } from "./screens/PasswordScreen";
 import { VaultScreen } from "./screens/VaultScreen";
 
@@ -26,6 +27,30 @@ export function App() {
     void load();
   }, [load]);
 
+  // Khoá từ menu tray: chuyển sang màn hình mở khoá.
+  useEffect(() => {
+    const unlisten = api.onVaultLocked(() => void load());
+    return () => void unlisten.then((fn) => fn());
+  }, [load]);
+
+  return (
+    <>
+      <Screen status={status} error={error} load={load} />
+      {/* Extension xin kết nối: hỏi ở mọi màn hình, kể cả khi vault đang khoá. */}
+      <PairDialog />
+    </>
+  );
+}
+
+function Screen({
+  status,
+  error,
+  load,
+}: {
+  status: VaultStatus | null;
+  error: string | null;
+  load: () => Promise<void>;
+}) {
   if (error) {
     return (
       <main className="page page--center">

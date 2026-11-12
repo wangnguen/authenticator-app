@@ -8,12 +8,14 @@ import type {
   ImportPreview,
   ImportResult,
   NewAccount,
+  PairedExtension,
   RestorePreview,
   SyncPreview,
   SyncResult,
   TrashEntry,
   VaultStatus,
 } from "@auth/core";
+import type { PairRequestResult } from "@auth/core";
 
 /** Extension được nhúng trong app để "Load unpacked" (khi chưa có trên Store). */
 export interface ExtensionPackage {
@@ -63,6 +65,17 @@ export const api = {
       browser,
     }),
   openExtensionFolder: () => invoke<void>("open_extension_folder"),
+  /** Yêu cầu ghép đôi đang chờ (nếu lỡ sự kiện pair-request). */
+  pairingPending: () => invoke<PairRequestResult | null>("pairing_pending"),
+  pairingDecide: (requestId: string, approve: boolean) =>
+    invoke<void>("pairing_decide", { requestId, approve }),
+  pairedExtensions: () => invoke<PairedExtension[]>("paired_extensions"),
+  revokeExtension: (id: string) => invoke<void>("revoke_extension", { id }),
+  /** Extension xin ghép đôi. */
+  onPairRequest: (callback: (request: PairRequestResult) => void) =>
+    listen<PairRequestResult>("pair-request", (e) => callback(e.payload)),
+  /** Vault bị khoá từ menu tray. */
+  onVaultLocked: (callback: () => void) => listen("vault-locked", callback),
 
   googleAccount: () => invoke<GoogleProfile | null>("google_account"),
   /** Mở trình duyệt để đăng nhập, resolve khi đăng nhập xong. */

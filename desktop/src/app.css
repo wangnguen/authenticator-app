@@ -504,3 +504,60 @@ h3 {
   min-width: 0;
   word-break: break-all;
 }
+
+/* Hộp thoại extension xin kết nối: nằm trên mọi hộp thoại khác. */
+.dialog-backdrop--pair {
+  z-index: 50;
+}
+
+.pair-code {
+  margin: 4px 0;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  text-align: center;
+}
+
+/* Danh sách extension đã kết nối. */
+.paired-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Thanh báo đồng bộ cần người dùng xử lý. */
+.sync-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #a8822a;
+  border-radius: var(--auth-radius);
+  background: rgb(240 180 60 / 10%);
+  color: #f0c060;
+  font-size: 12px;
+}
+
+.sync-banner span {
+  flex: 1;
+}
+
+.avatar-btn {
+  position: relative;
+}
+
+/* Chấm báo trên avatar khi đồng bộ cần xử lý. */
+.avatar-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--auth-bg);
+  border-radius: 50%;
+  background: #f0b43c;
+}
