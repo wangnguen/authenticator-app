@@ -400,3 +400,107 @@ h3 {
   border-color: var(--auth-accent);
   border-style: dashed;
 }
+
+/* Hộp thoại có danh sách dài (đồng bộ, Thùng rác). */
+.dialog--wide {
+  max-width: 460px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+
+.sync-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sync-password {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Cảnh báo có thể mất dữ liệu: nổi bật nhưng không đỏ như lỗi. */
+.sync-warning {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid #a8822a;
+  border-radius: var(--auth-radius);
+  background: rgb(240 180 60 / 10%);
+  color: #f0c060;
+  font-size: 12px;
+}
+
+.sync-warning p {
+  margin: 0;
+}
+
+.sync-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sync-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.sync-item input {
+  flex-shrink: 0;
+  accent-color: var(--auth-danger);
+}
+
+.badge--danger {
+  background: rgb(255 93 93 / 15%);
+  color: var(--auth-danger);
+}
+
+.restore-missing {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.trash-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.trash-link {
+  align-self: center;
+}
+
+/* Cài extension (Load unpacked) trong hộp thoại Kết nối extension. */
+.install-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.install-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.install-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--auth-border);
+  border-radius: var(--auth-radius);
+  background: var(--auth-surface);
+  font-size: 12px;
+}
+
+.install-path .mono {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}

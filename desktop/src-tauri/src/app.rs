@@ -1,6 +1,6 @@
 use crate::google::Google;
 use crate::vault::{SharedVault, Vault};
-use crate::{commands, ipc, register};
+use crate::{browser_extension, commands, ipc, register};
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
@@ -26,6 +26,14 @@ pub fn run() {
             let vault: SharedVault = Arc::new(Mutex::new(vault));
             app.manage(vault.clone());
             app.manage(register::register(&data_dir));
+            // App vừa cập nhật: cập nhật luôn thư mục extension đã giải nén trước đó (chạy nền để
+            // không làm chậm lúc mở cửa sổ).
+            let extension_dir = data_dir.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = browser_extension::refresh_if_outdated(&extension_dir) {
+                    eprintln!("Không cập nhật được thư mục extension: {e}");
+                }
+            });
             app.manage(Google::new(data_dir.clone()));
 
             let handle = app.handle().clone();
@@ -52,9 +60,17 @@ pub fn run() {
             commands::google_sign_out,
             commands::google_backup_info,
             commands::google_open_backup_folder,
-            commands::google_backup,
+            commands::google_sync_preview,
+            commands::google_sync,
+            commands::google_restore_preview,
             commands::google_restore,
+            commands::list_trash,
+            commands::restore_deleted,
+            commands::purge_deleted,
             commands::extension_info,
+            commands::extension_package,
+            commands::install_extension,
+            commands::open_extension_folder,
         ])
         .run(tauri::generate_context!())
         .expect("không khởi động được ứng dụng");

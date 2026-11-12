@@ -98,6 +98,13 @@ impl BackupInfo {
     }
 }
 
+/// Bản sao lưu tải từ Drive.
+pub struct RemoteBackup {
+    pub bytes: Vec<u8>,
+    /// Thời điểm sửa trên Drive, dùng để phát hiện máy khác ghi đè trong lúc đồng bộ.
+    pub modified_time: String,
+}
+
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,
@@ -384,10 +391,52 @@ impl Google {
             .unwrap_or_else(|| format!("https://drive.google.com/drive/folders/{}", folder.id)))
     }
 
-    /// Ghi đè bản sao lưu duy nhất (tạo mới trong thư mục "Authenticator Backup" nếu chưa có).
-    pub async fn backup(&self, vault_file: Vec<u8>) -> AppResult<BackupInfo> {
+    /// Tải bản sao lưu về (`None`: chưa có).
+    pub async fn fetch_backup(&self) -> AppResult<Option<RemoteBackup>> {
         let token = self.access_token().await?;
-        let id = match self.find_backup(&token).await? {
+        let Some(file) = self.find_backup(&token).await? else {
+            return Ok(None);
+        };
+        let response = self
+            .http
+            .get(format!("{DRIVE_FILES_URL}/{}", file.id))
+            .bearer_auth(&token)
+            .query(&[("alt", "media")])
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(google_error(status, &response.text().await.unwrap_or_default()));
+        }
+        Ok(Some(RemoteBackup {
+            bytes: response.bytes().await?.to_vec(),
+            modified_time: file.modified_time.unwrap_or_default(),
+        }))
+    }
+
+    pub async fn download_backup(&self) -> AppResult<RemoteBackup> {
+        self.fetch_backup().await?.ok_or_else(|| {
+            AppError::new("NO_BACKUP", "Tài khoản Google này chưa có bản sao lưu nào.")
+        })
+    }
+
+    /// Ghi đè bản sao lưu duy nhất (tạo mới trong thư mục "Authenticator Backup" nếu chưa có).
+    /// `expected`: thời điểm sửa của bản đã tải về lúc gộp (`None`: lúc đó chưa có bản nào).
+    /// Nếu máy khác vừa ghi bản mới thì dừng lại, để không đè mất thay đổi của máy đó.
+    /// Drive API v3 không có ghi có điều kiện (If-Match), nên vẫn còn một khoảng rất ngắn giữa
+    /// bước kiểm tra và bước ghi; khi đó tài khoản vẫn còn trên máy kia và được tải lên lại ở lần
+    /// đồng bộ sau (không có bản ghi xoá nên không bị coi là đã xoá).
+    pub async fn upload_backup(&self, bytes: Vec<u8>, expected: Option<String>) -> AppResult<BackupInfo> {
+        let token = self.access_token().await?;
+        let current = self.find_backup(&token).await?;
+        let current_time = current.as_ref().map(|f| f.modified_time.clone().unwrap_or_default());
+        if current_time != expected {
+            return Err(AppError::new(
+                "BACKUP_CHANGED",
+                "Bản sao lưu trên Drive vừa được máy khác cập nhật. Hãy bấm Đồng bộ lại để gộp cả thay đổi đó.",
+            ));
+        }
+        let id = match current {
             Some(file) => file.id,
             None => {
                 let folder = self.ensure_folder(&token).await?;
@@ -412,30 +461,11 @@ impl Google {
             .bearer_auth(&token)
             .query(&[("uploadType", "media"), ("fields", "id,modifiedTime,size,webViewLink")])
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(vault_file)
+            .body(bytes)
             .send()
             .await?;
         let file: DriveFile = read_json(response).await?;
         Ok(BackupInfo::from_file(Some(file)).expect("có file"))
-    }
-
-    pub async fn download_backup(&self) -> AppResult<Vec<u8>> {
-        let token = self.access_token().await?;
-        let file = self.find_backup(&token).await?.ok_or_else(|| {
-            AppError::new("NO_BACKUP", "Tài khoản Google này chưa có bản sao lưu nào.")
-        })?;
-        let response = self
-            .http
-            .get(format!("{DRIVE_FILES_URL}/{}", file.id))
-            .bearer_auth(&token)
-            .query(&[("alt", "media")])
-            .send()
-            .await?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(google_error(status, &response.text().await.unwrap_or_default()));
-        }
-        Ok(response.bytes().await?.to_vec())
     }
 }
 

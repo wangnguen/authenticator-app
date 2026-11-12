@@ -161,6 +161,10 @@ jobs:
         run: |
           conf=desktop/src-tauri/tauri.conf.json
           jq --arg v "$VERSION" '.version = $v' "$conf" > "$conf.tmp" && mv "$conf.tmp" "$conf"
+          manifest=extension/public/manifest.json
+          jq --arg v "$VERSION" '.version = $v' "$manifest" > "$manifest.tmp" && mv "$manifest.tmp" "$manifest"
+      # build.rs nhúng extension/dist vào app để nút "Cài extension" giải nén ra cho Load unpacked.
+      - run: pnpm build:extension
       # Cấu hình OAuth không nằm trong git; build.rs nhúng file này vào app nếu có.
       - name: Nhúng cấu hình Google OAuth
         shell: bash

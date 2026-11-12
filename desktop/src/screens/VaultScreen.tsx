@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { errorMessage } from "@auth/core";
 import { CodeList, Icon, SearchBox, useCodes } from "@auth/ui";
 import { api } from "../api";
@@ -6,6 +6,7 @@ import { AddAccountDialog } from "./AddAccountDialog";
 import { ExtensionDialog } from "./ExtensionDialog";
 import { GoogleAccountMenu } from "./GoogleAccountMenu";
 import { SecurityDialog } from "./SecurityDialog";
+import { TrashDialog } from "./TrashDialog";
 
 interface Props {
   /** false: vault không mật khẩu, ẩn nút khoá vì mở lại không cần gì. */
@@ -20,6 +21,8 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
   const [adding, setAdding] = useState(false);
   const [extensionOpen, setExtensionOpen] = useState(false);
   const [securityOpen, setSecurityOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashCount, setTrashCount] = useState(0);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -30,10 +33,24 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
     return () => clearTimeout(timer);
   }, [notice]);
 
+  const refreshTrash = useCallback(
+    () => api.listTrash().then((t) => setTrashCount(t.length), () => setTrashCount(0)),
+    [],
+  );
+
+  /** Tải lại danh sách mã và số tài khoản trong Thùng rác. */
+  const reload = useCallback(async () => {
+    await Promise.all([refresh(), refreshTrash()]);
+  }, [refresh, refreshTrash]);
+
   useEffect(() => {
-    const unlisten = api.onVaultChanged(() => void refresh());
+    void refreshTrash();
+  }, [refreshTrash]);
+
+  useEffect(() => {
+    const unlisten = api.onVaultChanged(() => void reload());
     return () => void unlisten.then((fn) => fn());
-  }, [refresh]);
+  }, [reload]);
 
   const remove = async (id: string) => {
     if (confirmDelete !== id) {
@@ -41,9 +58,11 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
       return;
     }
     try {
+      const entry = entries.find((e) => e.id === id);
       await api.deleteAccount(id);
       setConfirmDelete(null);
-      await refresh();
+      setNotice(`Đã chuyển ${entry?.issuer || entry?.label || "tài khoản"} vào Thùng rác.`);
+      await reload();
     } catch (e) {
       setActionError(errorMessage(e));
     }
@@ -81,8 +100,9 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
             onRestored={() => {
               // Bản JSON không mã hoá khôi phục xong vẫn mở sẵn, nên tải lại danh sách mã.
               onSecurityChanged();
-              void refresh();
+              void reload();
             }}
+            onSynced={() => void reload()}
           />
         </div>
       </header>
@@ -109,6 +129,18 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
           )}
         />
       )}
+
+      {trashCount > 0 && (
+        <button
+          className="auth-btn auth-btn--small trash-link"
+          onClick={() => setTrashOpen(true)}
+          title="Tài khoản đã xoá, khôi phục được"
+        >
+          <Icon name="trash" /> Thùng rác ({trashCount})
+        </button>
+      )}
+
+      {trashOpen && <TrashDialog onClose={() => setTrashOpen(false)} onChanged={() => void reload()} />}
 
       {extensionOpen && <ExtensionDialog onClose={() => setExtensionOpen(false)} />}
 

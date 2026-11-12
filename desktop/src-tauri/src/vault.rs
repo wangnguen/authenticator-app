@@ -6,6 +6,7 @@
 use crate::dpapi;
 use crate::error::{AppError, AppResult};
 use crate::otpauth;
+use crate::sync::{Merge, PendingDeletion, SyncSummary};
 use crate::totp::{self, Algorithm};
 use aes_gcm::aead::rand_core::RngCore;
 use aes_gcm::aead::{Aead, KeyInit, OsRng, Payload};
@@ -21,9 +22,14 @@ use zeroize::Zeroizing;
 
 pub type SharedVault = Arc<Mutex<Vault>>;
 
-const FILE_VERSION: u32 = 1;
+/// v1: nội dung giải mã là mảng tài khoản. v2: `{ accounts, deleted }` (thêm Thùng rác).
+/// App bản cũ gặp v2 sẽ báo "phiên bản không hỗ trợ" thay vì đọc sai.
+const FILE_VERSION: u32 = 2;
+const MIN_FILE_VERSION: u32 = 1;
 const AAD: &[u8] = b"authenticator-vault-v1";
 pub const MIN_PASSWORD_LEN: usize = 8;
+/// Số bản vault cũ giữ lại trong thư mục `history` (trước khi khôi phục/đồng bộ thay đổi vault).
+const HISTORY_KEEP: usize = 10;
 
 /// Base32 không padding, bỏ qua trailing bits (một số dịch vụ sinh secret như vậy).
 static BASE32: LazyLock<Encoding> = LazyLock::new(|| {
@@ -34,16 +40,140 @@ static BASE32: LazyLock<Encoding> = LazyLock::new(|| {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Account {
-    id: String,
-    issuer: String,
-    label: String,
+pub(crate) struct Account {
+    pub(crate) id: String,
+    pub(crate) issuer: String,
+    pub(crate) label: String,
     /// Base32 đã chuẩn hoá (in hoa, không padding).
-    secret: String,
-    algorithm: Algorithm,
-    digits: u32,
-    period: u64,
-    created_at: u64,
+    pub(crate) secret: String,
+    pub(crate) algorithm: Algorithm,
+    pub(crate) digits: u32,
+    pub(crate) period: u64,
+    pub(crate) created_at: u64,
+    /// Lần thay đổi cuối (khôi phục từ Thùng rác, giữ lại khi đồng bộ), Unix ms.
+    /// Vault cũ không có trường này thì coi như bằng `created_at`.
+    #[serde(default)]
+    pub(crate) updated_at: u64,
+}
+
+impl Account {
+    pub(crate) fn changed_at(&self) -> u64 {
+        self.updated_at.max(self.created_at)
+    }
+
+    pub(crate) fn summary(&self) -> AccountSummary {
+        AccountSummary {
+            id: self.id.clone(),
+            issuer: self.issuer.clone(),
+            label: self.label.clone(),
+        }
+    }
+}
+
+/// Tài khoản đã xoá. Giữ `id` + thời điểm xoá để khi đồng bộ máy khác biết là "đã xoá" chứ
+/// không phải "chưa có", và giữ cả dữ liệu tài khoản để khôi phục từ Thùng rác.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Deleted {
+    pub(crate) id: String,
+    pub(crate) deleted_at: u64,
+    /// `None`: đã xoá vĩnh viễn, không còn secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) account: Option<Account>,
+}
+
+/// Nội dung đã giải mã của vault, cũng là nội dung của bản sao lưu.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct VaultData {
+    pub(crate) accounts: Vec<Account>,
+    #[serde(default)]
+    pub(crate) deleted: Vec<Deleted>,
+}
+
+/// Nội dung giải mã: vault v1 là mảng tài khoản, v2 là [`VaultData`].
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredData {
+    Current(VaultData),
+    Legacy(Vec<Account>),
+}
+
+impl From<StoredData> for VaultData {
+    fn from(stored: StoredData) -> Self {
+        match stored {
+            StoredData::Current(data) => data,
+            StoredData::Legacy(accounts) => Self {
+                accounts,
+                deleted: Vec::new(),
+            },
+        }
+    }
+}
+
+/// Một mục trong Thùng rác (không có secret).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashEntry {
+    pub id: String,
+    pub issuer: String,
+    pub label: String,
+    /// Unix ms.
+    pub deleted_at: u64,
+}
+
+/// Bản sao lưu đã đọc được.
+pub enum Remote {
+    /// Drive chưa có bản sao lưu.
+    Missing,
+    /// JSON không mã hoá (sao lưu từ vault không mật khẩu).
+    Plain(VaultData),
+    Encrypted {
+        data: VaultData,
+        key: Zeroizing<[u8; 32]>,
+        kdf: KdfParams,
+        /// Cùng master password và salt với vault trên máy.
+        same_as_local: bool,
+    },
+}
+
+impl Remote {
+    fn data(&self) -> Option<&VaultData> {
+        match self {
+            Self::Missing => None,
+            Self::Plain(data) | Self::Encrypted { data, .. } => Some(data),
+        }
+    }
+}
+
+/// Xem trước kết quả đồng bộ (không chứa secret).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncPreview {
+    /// Thời điểm sửa của bản sao lưu đã xem trước (`None`: chưa có bản nào).
+    pub backup_version: Option<String>,
+    pub backup_exists: bool,
+    /// Tài khoản sẽ được thêm vào máy này.
+    pub added: Vec<AccountSummary>,
+    /// Tài khoản chỉ có trên máy này, sẽ được đưa lên bản sao lưu.
+    pub uploaded: Vec<AccountSummary>,
+    /// Tài khoản bị xoá ở một bên, chỉ xoá khi người dùng xác nhận.
+    pub pending_deletions: Vec<PendingDeletion>,
+    pub warnings: Vec<String>,
+}
+
+/// Xem trước khi khôi phục (thay toàn bộ vault trên máy bằng bản sao lưu).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestorePreview {
+    /// Thời điểm sửa của bản sao lưu đã so sánh, truyền lại khi khôi phục.
+    pub backup_version: String,
+    pub local_count: usize,
+    /// `None`: bản sao lưu dùng master password khác, chưa đọc được.
+    pub backup_count: Option<usize>,
+    /// Tài khoản đang có trên máy nhưng không có trong bản sao lưu (sẽ mất khỏi danh sách).
+    /// `None`: chưa đọc được bản sao lưu nên không so sánh được.
+    pub missing: Option<Vec<AccountSummary>>,
+    pub warnings: Vec<String>,
 }
 
 /// Dữ liệu tài khoản mới, từ form nhập tay hoặc từ link otpauth://.
@@ -108,7 +238,8 @@ const PLAIN_BACKUP_FORMAT: &str = "authenticator-plain-backup";
 struct PlainBackup {
     format: String,
     version: u32,
-    accounts: Vec<Account>,
+    #[serde(flatten)]
+    data: VaultData,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -140,9 +271,9 @@ pub struct VaultStatus {
     pub has_password: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct KdfParams {
+pub struct KdfParams {
     salt: String,
     memory_kib: u32,
     iterations: u32,
@@ -244,12 +375,97 @@ impl VaultFile {
             (None, None) => Err(AppError::internal("File vault thiếu thông tin key.")),
         }
     }
+
+    fn supported(&self) -> bool {
+        (MIN_FILE_VERSION..=FILE_VERSION).contains(&self.version)
+    }
+
+    /// Mã hoá dữ liệu thành file vault (nonce mới mỗi lần).
+    fn seal(data: &VaultData, key: &[u8; 32], protection: &Protection) -> AppResult<Self> {
+        let plaintext = Zeroizing::new(serde_json::to_vec(data)?);
+        let mut nonce = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce);
+        let cipher = Aes256Gcm::new_from_slice(key).map_err(AppError::internal)?;
+        let ciphertext = cipher
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &plaintext,
+                    aad: AAD,
+                },
+            )
+            .map_err(AppError::internal)?;
+        let (kdf, device_key) = match protection {
+            Protection::Password(kdf) => (Some(kdf.clone()), None),
+            Protection::Device(wrapped) => (None, Some(wrapped.clone())),
+        };
+        Ok(Self {
+            version: FILE_VERSION,
+            kdf,
+            device_key,
+            nonce: BASE64.encode(&nonce),
+            ciphertext: BASE64.encode(&ciphertext),
+        })
+    }
+
+    /// Giải mã. Sai key thì trả `WRONG_PASSWORD`.
+    fn open(&self, key: &[u8; 32]) -> AppResult<VaultData> {
+        let nonce = BASE64.decode(self.nonce.as_bytes()).map_err(AppError::internal)?;
+        let ciphertext = BASE64
+            .decode(self.ciphertext.as_bytes())
+            .map_err(AppError::internal)?;
+        if nonce.len() != 12 {
+            return Err(AppError::internal("Nonce không hợp lệ."));
+        }
+        let cipher = Aes256Gcm::new_from_slice(key).map_err(AppError::internal)?;
+        let plaintext = Zeroizing::new(
+            cipher
+                .decrypt(
+                    Nonce::from_slice(&nonce),
+                    Payload {
+                        msg: &ciphertext,
+                        aad: AAD,
+                    },
+                )
+                .map_err(|_| AppError::wrong_password())?,
+        );
+        Ok(serde_json::from_slice::<StoredData>(&plaintext)?.into())
+    }
+}
+
+/// Bản sao lưu chưa giải mã.
+enum Backup {
+    Plain(VaultData),
+    Encrypted(VaultFile),
+}
+
+fn invalid_backup() -> AppError {
+    AppError::new("INVALID_BACKUP", "Bản sao lưu không hợp lệ.")
+}
+
+fn parse_backup(bytes: &[u8]) -> AppResult<Backup> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid_backup())?;
+    if value["format"] == PLAIN_BACKUP_FORMAT {
+        let backup: PlainBackup = serde_json::from_value(value).map_err(|_| invalid_backup())?;
+        return Ok(Backup::Plain(backup.data));
+    }
+    let file: VaultFile = serde_json::from_value(value).map_err(|_| invalid_backup())?;
+    if file.kdf.is_none() {
+        return Err(invalid_backup());
+    }
+    if !file.supported() {
+        return Err(AppError::new(
+            "INVALID_BACKUP",
+            "Bản sao lưu được tạo bởi phiên bản app mới hơn. Hãy cập nhật app.",
+        ));
+    }
+    Ok(Backup::Encrypted(file))
 }
 
 struct Unlocked {
     key: Zeroizing<[u8; 32]>,
     protection: Protection,
-    accounts: Vec<Account>,
+    data: VaultData,
 }
 
 pub struct Vault {
@@ -286,7 +502,7 @@ impl Vault {
         self.unlocked = Some(Unlocked {
             key,
             protection,
-            accounts: Vec::new(),
+            data: VaultData::default(),
         });
         self.save()
     }
@@ -297,40 +513,19 @@ impl Vault {
             return Err(AppError::no_vault());
         }
         let file = self.read_file()?;
-        if file.version != FILE_VERSION {
+        if !file.supported() {
             return Err(AppError::internal(format!(
-                "Phiên bản vault không hỗ trợ: {}",
+                "Phiên bản vault không hỗ trợ: {}. Hãy cập nhật app.",
                 file.version
             )));
         }
         let protection = file.protection()?;
         let key = protection.key(password)?;
-        let nonce = BASE64.decode(file.nonce.as_bytes()).map_err(AppError::internal)?;
-        let ciphertext = BASE64
-            .decode(file.ciphertext.as_bytes())
-            .map_err(AppError::internal)?;
-        if nonce.len() != 12 {
-            return Err(AppError::internal("Nonce không hợp lệ."));
-        }
-
-        let cipher = Aes256Gcm::new_from_slice(key.as_slice()).map_err(AppError::internal)?;
-        let plaintext = Zeroizing::new(
-            cipher
-                .decrypt(
-                    Nonce::from_slice(&nonce),
-                    Payload {
-                        msg: &ciphertext,
-                        aad: AAD,
-                    },
-                )
-                .map_err(|_| AppError::wrong_password())?,
-        );
-        let accounts: Vec<Account> = serde_json::from_slice(&plaintext)?;
-
+        let data = file.open(&key)?;
         self.unlocked = Some(Unlocked {
             key,
             protection,
-            accounts,
+            data,
         });
         Ok(())
     }
@@ -364,62 +559,283 @@ impl Vault {
         self.unlocked = None;
     }
 
-    /// Nội dung bản sao lưu:
-    /// - vault có master password: nguyên file vault (đã mã hoá).
+    /// Nội dung bản sao lưu theo cách bảo vệ của vault trên máy:
+    /// - vault có master password: file vault đã mã hoá.
     /// - vault không mật khẩu: key do DPAPI giữ, không mang sang máy khác được, nên sao lưu
     ///   danh sách tài khoản dạng JSON không mã hoá (chỉ được bảo vệ bởi tài khoản Google).
     pub fn backup_bytes(&self) -> AppResult<Vec<u8>> {
-        if !self.path.exists() {
-            return Err(AppError::no_vault());
+        let unlocked = self.unlocked()?;
+        match &unlocked.protection {
+            Protection::Password(_) => {
+                let file = VaultFile::seal(&unlocked.data, &unlocked.key, &unlocked.protection)?;
+                Ok(serde_json::to_vec_pretty(&file)?)
+            }
+            Protection::Device(_) => {
+                let backup = PlainBackup {
+                    format: PLAIN_BACKUP_FORMAT.into(),
+                    version: 1,
+                    data: unlocked.data.clone(),
+                };
+                Ok(serde_json::to_vec_pretty(&backup)?)
+            }
         }
-        if self.read_file()?.kdf.is_some() {
-            return Ok(fs::read(&self.path)?);
-        }
-        let backup = PlainBackup {
-            format: PLAIN_BACKUP_FORMAT.into(),
-            version: 1,
-            accounts: self.unlocked()?.accounts.clone(),
-        };
-        Ok(serde_json::to_vec_pretty(&backup)?)
     }
 
-    /// Thay vault trên máy bằng bản sao lưu. Vault cũ (nếu có) được giữ ở `vault.json.bak`.
+    /// Đọc bản sao lưu (`None`: Drive chưa có bản nào).
+    /// Bản mã hoá cùng master password và salt với máy này thì dùng luôn key đang mở; khác thì
+    /// cần `password` của bản sao lưu, thiếu thì trả lỗi `BACKUP_PASSWORD`.
+    pub fn read_remote(&self, bytes: Option<&[u8]>, password: Option<&str>) -> AppResult<Remote> {
+        let Some(bytes) = bytes else {
+            return Ok(Remote::Missing);
+        };
+        let unlocked = self.unlocked()?;
+        let file = match parse_backup(bytes)? {
+            Backup::Plain(data) => return Ok(Remote::Plain(data)),
+            Backup::Encrypted(file) => file,
+        };
+        let kdf = file.kdf.clone().ok_or_else(invalid_backup)?;
+        if let Protection::Password(local) = &unlocked.protection {
+            if *local == kdf {
+                if let Ok(data) = file.open(&unlocked.key) {
+                    return Ok(Remote::Encrypted {
+                        data,
+                        key: unlocked.key.clone(),
+                        kdf,
+                        same_as_local: true,
+                    });
+                }
+            }
+        }
+        let password = password.ok_or_else(|| {
+            AppError::new(
+                "BACKUP_PASSWORD",
+                "Bản sao lưu trên Drive dùng master password khác với máy này. Nhập master password của bản sao lưu.",
+            )
+        })?;
+        let key = kdf.derive_key(password)?;
+        let data = file.open(&key).map_err(|e| {
+            if e.code == "WRONG_PASSWORD" {
+                AppError::new("WRONG_PASSWORD", "Sai master password của bản sao lưu.")
+            } else {
+                e
+            }
+        })?;
+        Ok(Remote::Encrypted {
+            data,
+            key,
+            kdf,
+            same_as_local: false,
+        })
+    }
+
+    /// Xem trước kết quả đồng bộ, không thay đổi gì. `backup_version` được trả lại cho
+    /// `google_sync` để chắc chắn áp dụng đúng bản sao lưu người dùng đã xem.
+    pub fn sync_preview(
+        &self,
+        remote: &Remote,
+        password: Option<&str>,
+        backup_version: Option<String>,
+    ) -> AppResult<SyncPreview> {
+        let unlocked = self.unlocked()?;
+        let empty = VaultData::default();
+        let merge = Merge::compute(&unlocked.data, remote.data().unwrap_or(&empty));
+        let pending_deletions = merge.pending();
+        let mut warnings = Vec::new();
+        if let (Protection::Password(_), Remote::Encrypted { same_as_local: false, .. }) =
+            (&unlocked.protection, remote)
+        {
+            if self.shared_key(remote, password)?.is_none() {
+                warnings.push(
+                    "Bản sao lưu đang dùng master password khác. Sau khi đồng bộ, bản sao lưu sẽ dùng master password của máy này."
+                        .into(),
+                );
+            }
+        }
+        Ok(SyncPreview {
+            backup_version,
+            backup_exists: !matches!(remote, Remote::Missing),
+            added: merge.added,
+            uploaded: merge.uploaded,
+            pending_deletions,
+            warnings,
+        })
+    }
+
+    /// Gộp bản sao lưu vào vault trên máy, trả nội dung cần tải lên Drive.
+    /// Chỉ xoá các tài khoản có id trong `confirmed`; vault trước khi đổi được giữ trong `history`.
+    pub fn sync_apply(
+        &mut self,
+        remote: &Remote,
+        confirmed: &[String],
+        password: Option<&str>,
+    ) -> AppResult<(SyncSummary, Vec<u8>)> {
+        let shared_key = self.shared_key(remote, password)?;
+        let unlocked = self.unlocked()?;
+        let empty = VaultData::default();
+        let (data, summary) = Merge::compute(&unlocked.data, remote.data().unwrap_or(&empty))
+            .resolve(confirmed, now_ms());
+        let changed = serde_json::to_vec(&sorted(&unlocked.data))? != serde_json::to_vec(&data)?;
+
+        if changed || shared_key.is_some() {
+            self.snapshot()?;
+            let unlocked = self.unlocked_mut()?;
+            unlocked.data = data;
+            if let Some((key, kdf)) = shared_key {
+                unlocked.key = key;
+                unlocked.protection = Protection::Password(kdf);
+            }
+            self.save()?;
+        }
+        Ok((summary, self.upload_bytes(remote)?))
+    }
+
+    /// Hai máy đặt cùng master password nhưng khác salt: trả key + salt của bản sao lưu để máy
+    /// này dùng chung, lần đồng bộ sau không phải nhập lại mật khẩu.
+    fn shared_key(
+        &self,
+        remote: &Remote,
+        password: Option<&str>,
+    ) -> AppResult<Option<(Zeroizing<[u8; 32]>, KdfParams)>> {
+        let unlocked = self.unlocked()?;
+        if let (
+            Remote::Encrypted {
+                key,
+                kdf,
+                same_as_local: false,
+                ..
+            },
+            Protection::Password(local),
+            Some(password),
+        ) = (remote, &unlocked.protection, password)
+        {
+            if local.derive_key(password)?.as_slice() == unlocked.key.as_slice() {
+                return Ok(Some((key.clone(), kdf.clone())));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Nội dung tải lên khi đồng bộ. Vault không mật khẩu mà bản trên Drive đang mã hoá thì vẫn
+    /// mã hoá bằng key của bản đó, không hạ xuống JSON không mã hoá.
+    fn upload_bytes(&self, remote: &Remote) -> AppResult<Vec<u8>> {
+        let unlocked = self.unlocked()?;
+        match (&unlocked.protection, remote) {
+            (Protection::Device(_), Remote::Encrypted { key, kdf, .. }) => {
+                let file = VaultFile::seal(&unlocked.data, key, &Protection::Password(kdf.clone()))?;
+                Ok(serde_json::to_vec_pretty(&file)?)
+            }
+            _ => self.backup_bytes(),
+        }
+    }
+
+    /// So sánh vault trên máy với bản sao lưu trước khi khôi phục (thay toàn bộ).
+    pub fn restore_preview(&self, bytes: &[u8], backup_version: String) -> AppResult<RestorePreview> {
+        let unlocked = self.unlocked()?;
+        let has_password = matches!(unlocked.protection, Protection::Password(_));
+        let mut warnings: Vec<String> = Vec::new();
+        let backup = match (parse_backup(bytes)?, has_password) {
+            (Backup::Plain(data), true) => {
+                warnings.push(
+                    "Bản sao lưu không mã hoá: sau khi khôi phục, vault sẽ không còn master password."
+                        .into(),
+                );
+                Some(data)
+            }
+            (Backup::Plain(data), false) => Some(data),
+            // Vault không mật khẩu không có key để đọc bản mã hoá, nên không so sánh được.
+            (Backup::Encrypted(_), false) => {
+                warnings.push(
+                    "Bản sao lưu được mã hoá: sau khi khôi phục, vault dùng master password của bản sao lưu và phải nhập mỗi lần mở app."
+                        .into(),
+                );
+                None
+            }
+            (Backup::Encrypted(_), true) => match self.read_remote(Some(bytes), None) {
+                Ok(remote) => remote.data().cloned(),
+                Err(e) if e.code == "BACKUP_PASSWORD" => {
+                    warnings.push(
+                        "Bản sao lưu dùng master password khác: sau khi khôi phục phải mở vault bằng master password của bản sao lưu."
+                            .into(),
+                    );
+                    None
+                }
+                Err(e) => return Err(e),
+            },
+        };
+        let missing = backup.as_ref().map(|backup| {
+            unlocked
+                .data
+                .accounts
+                .iter()
+                .filter(|a| !backup.accounts.iter().any(|b| b.secret == a.secret))
+                .map(Account::summary)
+                .collect()
+        });
+        Ok(RestorePreview {
+            backup_version,
+            local_count: unlocked.data.accounts.len(),
+            backup_count: backup.map(|b| b.accounts.len()),
+            missing,
+            warnings,
+        })
+    }
+
+    /// Thay vault trên máy bằng bản sao lưu. Vault cũ (nếu có) được giữ trong thư mục `history`.
     /// - Bản mã hoá: vault bị khoá, mở bằng master password của bản sao lưu.
     /// - Bản JSON không mã hoá: tạo vault không mật khẩu, mở khoá luôn.
     pub fn restore_backup(&mut self, bytes: &[u8]) -> AppResult<()> {
-        let invalid = || AppError::new("INVALID_BACKUP", "Bản sao lưu không hợp lệ.");
-        let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
-
-        if value["format"] == PLAIN_BACKUP_FORMAT {
-            let backup: PlainBackup = serde_json::from_value(value).map_err(|_| invalid())?;
-            self.keep_previous_vault()?;
-            let (key, protection) = Protection::generate(None)?;
-            self.unlocked = Some(Unlocked {
-                key,
-                protection,
-                accounts: backup.accounts,
-            });
-            return self.save();
+        match parse_backup(bytes)? {
+            Backup::Plain(data) => {
+                self.snapshot()?;
+                let (key, protection) = Protection::generate(None)?;
+                self.unlocked = Some(Unlocked {
+                    key,
+                    protection,
+                    data,
+                });
+                self.save()
+            }
+            Backup::Encrypted(_) => {
+                self.snapshot()?;
+                if let Some(dir) = self.path.parent() {
+                    fs::create_dir_all(dir)?;
+                }
+                let tmp = self.path.with_extension("json.tmp");
+                fs::write(&tmp, bytes)?;
+                fs::rename(&tmp, &self.path)?;
+                self.lock();
+                Ok(())
+            }
         }
-
-        let file: VaultFile = serde_json::from_value(value).map_err(|_| invalid())?;
-        if file.version != FILE_VERSION || file.kdf.is_none() {
-            return Err(invalid());
-        }
-        self.keep_previous_vault()?;
-        let tmp = self.path.with_extension("json.tmp");
-        fs::write(&tmp, bytes)?;
-        fs::rename(&tmp, &self.path)?;
-        self.lock();
-        Ok(())
     }
 
-    fn keep_previous_vault(&self) -> AppResult<()> {
-        if let Some(dir) = self.path.parent() {
-            fs::create_dir_all(dir)?;
+    /// Thư mục chứa các bản vault cũ, cạnh file vault.
+    pub fn history_dir(&self) -> PathBuf {
+        self.path.with_file_name("history")
+    }
+
+    /// Lưu bản sao file vault hiện tại vào `history/` và chỉ giữ `HISTORY_KEEP` bản mới nhất.
+    fn snapshot(&self) -> AppResult<()> {
+        if !self.path.exists() {
+            return Ok(());
         }
-        if self.path.exists() {
-            fs::copy(&self.path, self.path.with_extension("json.bak"))?;
+        let dir = self.history_dir();
+        fs::create_dir_all(&dir)?;
+        fs::copy(&self.path, dir.join(format!("vault-{}.json", now_ms())))?;
+
+        let mut files: Vec<PathBuf> = fs::read_dir(&dir)?
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("vault-") && name.ends_with(".json"))
+            })
+            .collect();
+        // Tên theo Unix ms cùng số chữ số nên sắp theo tên là theo thời gian.
+        files.sort();
+        let excess = files.len().saturating_sub(HISTORY_KEEP);
+        for old in &files[..excess] {
+            let _ = fs::remove_file(old);
         }
         Ok(())
     }
@@ -440,6 +856,7 @@ impl Vault {
         let now = now_ms();
         let mut entries: Vec<CodeEntry> = self
             .unlocked()?
+            .data
             .accounts
             .iter()
             .map(|acc| {
@@ -484,7 +901,7 @@ impl Vault {
         let unlocked = self.unlocked_mut()?;
         let mut result = ImportResult::default();
         for account in accounts {
-            if unlocked.accounts.iter().any(|a| a.secret == account.secret) {
+            if unlocked.data.accounts.iter().any(|a| a.secret == account.secret) {
                 result.duplicates += 1;
                 continue;
             }
@@ -493,7 +910,7 @@ impl Vault {
                 issuer: account.issuer.clone(),
                 label: account.label.clone(),
             });
-            unlocked.accounts.push(account);
+            unlocked.data.accounts.push(account);
         }
         if !result.added.is_empty() {
             self.save()?;
@@ -503,7 +920,7 @@ impl Vault {
 
     /// Xem trước các tài khoản sẽ được import (không lưu, không trả secret).
     pub fn preview_uri(&self, input: &str) -> AppResult<ImportPreview> {
-        let existing = &self.unlocked()?.accounts;
+        let existing = &self.unlocked()?.data.accounts;
         let parsed = otpauth::parse_many(input)?;
         let mut seen: Vec<String> = Vec::new();
         let mut accounts = Vec::new();
@@ -543,45 +960,88 @@ impl Vault {
         Ok(result)
     }
 
+    /// Chuyển tài khoản vào Thùng rác (khôi phục được, và đồng bộ báo cho máy khác là đã xoá).
     pub fn remove(&mut self, id: &str) -> AppResult<()> {
         let unlocked = self.unlocked_mut()?;
-        let before = unlocked.accounts.len();
-        unlocked.accounts.retain(|a| a.id != id);
-        if unlocked.accounts.len() == before {
+        let index = unlocked
+            .data
+            .accounts
+            .iter()
+            .position(|a| a.id == id)
+            .ok_or_else(AppError::not_found)?;
+        let account = unlocked.data.accounts.remove(index);
+        unlocked.data.deleted.retain(|d| d.id != id);
+        unlocked.data.deleted.push(Deleted {
+            id: account.id.clone(),
+            deleted_at: now_ms(),
+            account: Some(account),
+        });
+        self.save()
+    }
+
+    /// Các tài khoản trong Thùng rác, mới xoá trước.
+    pub fn trash(&self) -> AppResult<Vec<TrashEntry>> {
+        let mut entries: Vec<TrashEntry> = self
+            .unlocked()?
+            .data
+            .deleted
+            .iter()
+            .filter_map(|d| {
+                d.account.as_ref().map(|a| TrashEntry {
+                    id: d.id.clone(),
+                    issuer: a.issuer.clone(),
+                    label: a.label.clone(),
+                    deleted_at: d.deleted_at,
+                })
+            })
+            .collect();
+        entries.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+        Ok(entries)
+    }
+
+    /// Lấy tài khoản ra khỏi Thùng rác. Thời điểm thay đổi mới hơn lúc xoá nên khi đồng bộ,
+    /// các máy khác cũng có lại tài khoản này.
+    pub fn restore_deleted(&mut self, id: &str) -> AppResult<AccountSummary> {
+        let unlocked = self.unlocked_mut()?;
+        let index = unlocked
+            .data
+            .deleted
+            .iter()
+            .position(|d| d.id == id && d.account.is_some())
+            .ok_or_else(AppError::not_found)?;
+        let Some(mut account) = unlocked.data.deleted[index].account.clone() else {
             return Err(AppError::not_found());
+        };
+        if unlocked.data.accounts.iter().any(|a| a.secret == account.secret) {
+            return Err(AppError::invalid_account(
+                "Tài khoản này đã có trong danh sách (có thể đã được thêm lại).",
+            ));
         }
+        unlocked.data.deleted.remove(index);
+        account.updated_at = now_ms();
+        let summary = account.summary();
+        unlocked.data.accounts.push(account);
+        self.save()?;
+        Ok(summary)
+    }
+
+    /// Xoá vĩnh viễn khỏi Thùng rác: bỏ secret, chỉ giữ id + thời điểm xoá để đồng bộ.
+    /// Các bản vault cũ trong `history/` (và bản trên Drive cho tới lần đồng bộ sau) vẫn còn.
+    pub fn purge_deleted(&mut self, id: &str) -> AppResult<()> {
+        let unlocked = self.unlocked_mut()?;
+        let entry = unlocked
+            .data
+            .deleted
+            .iter_mut()
+            .find(|d| d.id == id && d.account.is_some())
+            .ok_or_else(AppError::not_found)?;
+        entry.account = None;
         self.save()
     }
 
     fn save(&self) -> AppResult<()> {
         let unlocked = self.unlocked()?;
-        let plaintext = Zeroizing::new(serde_json::to_vec(&unlocked.accounts)?);
-        let mut nonce = [0u8; 12];
-        OsRng.fill_bytes(&mut nonce);
-
-        let cipher =
-            Aes256Gcm::new_from_slice(unlocked.key.as_slice()).map_err(AppError::internal)?;
-        let ciphertext = cipher
-            .encrypt(
-                Nonce::from_slice(&nonce),
-                Payload {
-                    msg: &plaintext,
-                    aad: AAD,
-                },
-            )
-            .map_err(AppError::internal)?;
-
-        let (kdf, device_key) = match &unlocked.protection {
-            Protection::Password(kdf) => (Some(kdf.clone()), None),
-            Protection::Device(wrapped) => (None, Some(wrapped.clone())),
-        };
-        let file = VaultFile {
-            version: FILE_VERSION,
-            kdf,
-            device_key,
-            nonce: BASE64.encode(&nonce),
-            ciphertext: BASE64.encode(&ciphertext),
-        };
+        let file = VaultFile::seal(&unlocked.data, &unlocked.key, &unlocked.protection)?;
 
         // Ghi ra file tạm rồi rename để không làm hỏng vault nếu bị ngắt giữa chừng.
         if let Some(dir) = self.path.parent() {
@@ -592,6 +1052,14 @@ impl Vault {
         fs::rename(&tmp, &self.path)?;
         Ok(())
     }
+}
+
+/// Bản sao sắp theo id, để so sánh với kết quả gộp.
+fn sorted(data: &VaultData) -> VaultData {
+    let mut data = data.clone();
+    data.accounts.sort_by(|a, b| a.id.cmp(&b.id));
+    data.deleted.sort_by(|a, b| a.id.cmp(&b.id));
+    data
 }
 
 fn check_password(password: &str) -> AppResult<()> {
@@ -617,6 +1085,7 @@ fn build_account(new: NewAccount) -> AppResult<Account> {
     if !(1..=300).contains(&new.period) {
         return Err(AppError::invalid_account("Chu kỳ phải từ 1 đến 300 giây."));
     }
+    let now = now_ms();
     Ok(Account {
         id: uuid::Uuid::new_v4().to_string(),
         issuer,
@@ -625,7 +1094,8 @@ fn build_account(new: NewAccount) -> AppResult<Account> {
         algorithm: new.algorithm,
         digits: new.digits,
         period: new.period,
-        created_at: now_ms(),
+        created_at: now,
+        updated_at: now,
     })
 }
 
@@ -669,6 +1139,209 @@ mod tests {
             secret: "jbsw y3dp ehpk 3pxp".into(),
             ..NewAccount::default()
         }
+    }
+
+    fn history_len(vault: &Vault) -> usize {
+        fs::read_dir(vault.history_dir()).map(|d| d.count()).unwrap_or(0)
+    }
+
+    fn account_with(secret: &str) -> NewAccount {
+        NewAccount {
+            issuer: format!("Issuer {secret}"),
+            secret: secret.into(),
+            ..NewAccount::default()
+        }
+    }
+
+    fn cleanup(vaults: &[&Vault]) {
+        for vault in vaults {
+            let _ = fs::remove_dir_all(vault.path.parent().unwrap());
+        }
+    }
+
+    /// Đồng bộ như command `google_sync`, với "Drive" là một mảng byte.
+    fn sync(vault: &mut Vault, drive: &mut Option<Vec<u8>>, confirmed: &[String]) -> SyncSummary {
+        let remote = vault.read_remote(drive.as_deref(), None).unwrap();
+        let (summary, bytes) = vault.sync_apply(&remote, confirmed, None).unwrap();
+        *drive = Some(bytes);
+        summary
+    }
+
+    #[test]
+    fn two_devices_sync_without_losing_accounts() {
+        let mut a = temp_vault();
+        a.create(Some("correct horse")).unwrap();
+        a.add(account_with("AAAAAAAA")).unwrap();
+        let mut drive = None;
+        assert_eq!(sync(&mut a, &mut drive, &[]).uploaded, 1);
+
+        // Máy B khôi phục từ Drive, rồi mỗi máy thêm một tài khoản riêng.
+        let mut b = temp_vault();
+        b.restore_backup(drive.as_ref().unwrap()).unwrap();
+        b.unlock(Some("correct horse")).unwrap();
+        b.add(account_with("BBBBBBBB")).unwrap();
+        a.add(account_with("CCCCCCCC")).unwrap();
+
+        sync(&mut b, &mut drive, &[]);
+        let summary = sync(&mut a, &mut drive, &[]);
+        assert_eq!((summary.added, summary.uploaded), (1, 1));
+        sync(&mut b, &mut drive, &[]);
+        assert_eq!(a.codes().unwrap().len(), 3);
+        assert_eq!(b.codes().unwrap().len(), 3);
+
+        // B xoá một tài khoản: A không tự xoá mà chờ xác nhận.
+        let removed = b.codes().unwrap()[0].id.clone();
+        b.remove(&removed).unwrap();
+        // Xoá trên máy này cũng hiện trong danh sách xác nhận khi đồng bộ.
+        let remote = b.read_remote(drive.as_deref(), None).unwrap();
+        assert_eq!(b.sync_preview(&remote, None, None).unwrap().pending_deletions.len(), 1);
+        sync(&mut b, &mut drive, std::slice::from_ref(&removed));
+        let remote = a.read_remote(drive.as_deref(), None).unwrap();
+        let preview = a.sync_preview(&remote, None, None).unwrap();
+        assert_eq!(preview.pending_deletions.len(), 1);
+        assert_eq!(preview.pending_deletions[0].id, removed);
+
+        // Không xác nhận: A giữ lại, và B cũng có lại sau lần đồng bộ sau.
+        assert_eq!(sync(&mut a, &mut drive, &[]).kept, 1);
+        assert_eq!(a.codes().unwrap().len(), 3);
+        sync(&mut b, &mut drive, &[]);
+        assert_eq!(b.codes().unwrap().len(), 3);
+
+        // Xoá lại và lần này xác nhận: tài khoản nằm trong Thùng rác, khôi phục được.
+        b.remove(&removed).unwrap();
+        sync(&mut b, &mut drive, std::slice::from_ref(&removed));
+        assert_eq!(sync(&mut a, &mut drive, std::slice::from_ref(&removed)).deleted, 1);
+        assert_eq!(a.codes().unwrap().len(), 2);
+        assert!(history_len(&a) >= 1, "vault trước khi xoá được lưu trong history");
+        assert_eq!(a.trash().unwrap()[0].id, removed);
+        a.restore_deleted(&removed).unwrap();
+        sync(&mut a, &mut drive, &[]);
+        sync(&mut b, &mut drive, &[]);
+        assert_eq!(b.codes().unwrap().len(), 3);
+        cleanup(&[&a, &b]);
+    }
+
+    #[test]
+    fn sync_with_backup_of_other_password() {
+        let mut a = temp_vault();
+        a.create(Some("correct horse")).unwrap();
+        a.add(account_with("AAAAAAAA")).unwrap();
+        let drive = a.backup_bytes().unwrap();
+
+        let mut b = temp_vault();
+        b.create(Some("battery staple")).unwrap();
+        b.add(account_with("BBBBBBBB")).unwrap();
+        let err = b.read_remote(Some(&drive), None).err().unwrap();
+        assert_eq!(err.code, "BACKUP_PASSWORD");
+        let err = b.read_remote(Some(&drive), Some("wrong pass")).err().unwrap();
+        assert_eq!(err.code, "WRONG_PASSWORD");
+
+        let remote = b.read_remote(Some(&drive), Some("correct horse")).unwrap();
+        assert_eq!(b.sync_preview(&remote, Some("correct horse"), None).unwrap().warnings.len(), 1);
+        let (_, uploaded) = b.sync_apply(&remote, &[], Some("correct horse")).unwrap();
+        assert_eq!(b.codes().unwrap().len(), 2);
+        // Bản tải lên dùng master password của máy B.
+        let mut check = temp_vault();
+        check.restore_backup(&uploaded).unwrap();
+        check.unlock(Some("battery staple")).unwrap();
+        assert_eq!(check.codes().unwrap().len(), 2);
+        cleanup(&[&a, &b, &check]);
+    }
+
+    #[test]
+    fn same_password_on_two_devices_shares_key_after_first_sync() {
+        let mut a = temp_vault();
+        a.create(Some("correct horse")).unwrap();
+        let drive = a.backup_bytes().unwrap();
+
+        let mut b = temp_vault();
+        b.create(Some("correct horse")).unwrap();
+        // Khác salt nên lần đầu cần nhập mật khẩu, nhưng không cảnh báo đổi mật khẩu.
+        let remote = b.read_remote(Some(&drive), Some("correct horse")).unwrap();
+        assert!(b.sync_preview(&remote, Some("correct horse"), None).unwrap().warnings.is_empty());
+        let (_, uploaded) = b.sync_apply(&remote, &[], Some("correct horse")).unwrap();
+        // Từ giờ cả hai máy đọc được bản sao lưu mà không cần nhập lại.
+        assert!(b.read_remote(Some(&uploaded), None).is_ok());
+        assert!(a.read_remote(Some(&uploaded), None).is_ok());
+        b.lock();
+        b.unlock(Some("correct horse")).unwrap();
+        cleanup(&[&a, &b]);
+    }
+
+    #[test]
+    fn restore_preview_lists_accounts_that_would_be_lost() {
+        let mut a = temp_vault();
+        a.create(Some("correct horse")).unwrap();
+        a.add(account_with("AAAAAAAA")).unwrap();
+        let drive = a.backup_bytes().unwrap();
+        a.add(account_with("BBBBBBBB")).unwrap();
+
+        let preview = a.restore_preview(&drive, String::new()).unwrap();
+        assert_eq!((preview.local_count, preview.backup_count), (2, Some(1)));
+        let missing = preview.missing.unwrap();
+        assert_eq!(missing.len(), 1);
+        assert_eq!(missing[0].issuer, "Issuer BBBBBBBB");
+
+        // Bản sao lưu khác mật khẩu: không so sánh được nhưng vẫn cảnh báo.
+        let mut b = temp_vault();
+        b.create(Some("battery staple")).unwrap();
+        let preview = b.restore_preview(&drive, String::new()).unwrap();
+        assert!(preview.missing.is_none() && !preview.warnings.is_empty());
+        cleanup(&[&a, &b]);
+    }
+
+    #[test]
+    fn trash_restore_and_purge() {
+        let mut vault = temp_vault();
+        vault.create(Some("correct horse")).unwrap();
+        let id = vault.add(sample()).unwrap().id;
+        vault.remove(&id).unwrap();
+        assert!(vault.codes().unwrap().is_empty());
+        assert_eq!(vault.trash().unwrap().len(), 1);
+
+        // Thùng rác được lưu cùng vault.
+        vault.lock();
+        vault.unlock(Some("correct horse")).unwrap();
+        vault.restore_deleted(&id).unwrap();
+        assert_eq!(vault.codes().unwrap().len(), 1);
+        assert!(vault.trash().unwrap().is_empty());
+
+        vault.remove(&id).unwrap();
+        vault.purge_deleted(&id).unwrap();
+        assert!(vault.trash().unwrap().is_empty());
+        assert_eq!(vault.restore_deleted(&id).unwrap_err().code, "NOT_FOUND");
+        cleanup(&[&vault]);
+    }
+
+    #[test]
+    fn opens_v1_vault_and_upgrades_on_save() {
+        let mut vault = temp_vault();
+        vault.create(Some("correct horse")).unwrap();
+        // Ghi file kiểu v1: nội dung giải mã là mảng tài khoản, không có updatedAt.
+        let legacy = serde_json::json!([{
+            "id": "x", "issuer": "Old", "label": "", "secret": "JBSWY3DPEHPK3PXP",
+            "algorithm": "SHA1", "digits": 6, "period": 30, "createdAt": 5
+        }]);
+        let mut nonce = [0u8; 12];
+        OsRng.fill_bytes(&mut nonce);
+        let key = vault.unlocked().unwrap().key.clone();
+        let cipher = Aes256Gcm::new_from_slice(key.as_slice()).unwrap();
+        let plaintext = serde_json::to_vec(&legacy).unwrap();
+        let ciphertext = cipher
+            .encrypt(Nonce::from_slice(&nonce), Payload { msg: &plaintext, aad: AAD })
+            .unwrap();
+        let mut file = vault.read_file().unwrap();
+        file.version = 1;
+        file.nonce = BASE64.encode(&nonce);
+        file.ciphertext = BASE64.encode(&ciphertext);
+        fs::write(&vault.path, serde_json::to_vec(&file).unwrap()).unwrap();
+
+        let mut reopened = Vault::new(vault.path.clone());
+        reopened.unlock(Some("correct horse")).unwrap();
+        assert_eq!(reopened.codes().unwrap()[0].issuer, "Old");
+        reopened.add(account_with("CCCCCCCC")).unwrap();
+        assert_eq!(reopened.read_file().unwrap().version, FILE_VERSION);
+        cleanup(&[&vault]);
     }
 
     #[test]
@@ -763,12 +1436,12 @@ mod tests {
         source.add(sample()).unwrap();
         let backup = source.backup_bytes().unwrap();
 
-        // Máy mới đã có vault khác: khôi phục thì vault cũ được giữ ở .bak.
+        // Máy mới đã có vault khác: khôi phục thì vault cũ được giữ trong history.
         let mut target = temp_vault();
         target.create(Some("other password")).unwrap();
         target.restore_backup(&backup).unwrap();
         assert!(!target.status().unlocked);
-        assert!(target.path.with_extension("json.bak").exists());
+        assert_eq!(history_len(&target), 1);
         assert_eq!(target.unlock(Some("other password")).unwrap_err().code, "WRONG_PASSWORD");
         target.unlock(Some("correct horse")).unwrap();
         assert_eq!(target.codes().unwrap()[0].issuer, "GitHub");
@@ -796,7 +1469,7 @@ mod tests {
         let status = target.status();
         assert!(status.unlocked && !status.has_password);
         assert_eq!(target.codes().unwrap()[0].issuer, "GitHub");
-        assert!(target.path.with_extension("json.bak").exists());
+        assert_eq!(history_len(&target), 1);
 
         let mut reopened = Vault::new(target.path.clone());
         reopened.auto_unlock().unwrap();

@@ -1,16 +1,39 @@
 import { useEffect, useRef, useState } from "react";
-import { errorMessage, type BackupInfo, type GoogleProfile } from "@auth/core";
+import {
+  errorMessage,
+  isAppError,
+  type BackupInfo,
+  type GoogleProfile,
+  type RestorePreview,
+  type SyncResult,
+} from "@auth/core";
 import { Icon } from "@auth/ui";
 import { api } from "../api";
+import { SyncDialog } from "./SyncDialog";
 
 interface Props {
   /** Có mật khẩu: sao lưu bản mã hoá. Không mật khẩu: sao lưu JSON không mã hoá. */
   hasPassword: boolean;
   /** Gọi sau khi khôi phục xong (bản mã hoá thì vault bị khoá, cần master password). */
   onRestored: () => void;
+  /** Gọi sau khi đồng bộ xong để tải lại danh sách mã và Thùng rác. */
+  onSynced: () => void;
 }
 
-type Busy = "signin" | "backup" | "folder" | "restore" | "signout" | null;
+type Busy = "signin" | "folder" | "restore-check" | "restore" | "signout" | null;
+
+/** Số tài khoản bị mất tối đa liệt kê trong hộp xác nhận khôi phục. */
+const MISSING_SHOWN = 5;
+
+function syncMessage(result: SyncResult): string {
+  const parts = [
+    result.added && `thêm ${result.added} tài khoản từ Drive`,
+    result.uploaded && `đưa ${result.uploaded} tài khoản lên Drive`,
+    result.deleted && `xoá ${result.deleted} tài khoản (vẫn còn trong Thùng rác)`,
+    result.kept && `giữ lại ${result.kept} tài khoản`,
+  ].filter(Boolean);
+  return parts.length ? `Đã đồng bộ: ${parts.join(", ")}.` : "Đã đồng bộ, không có thay đổi.";
+}
 type Message = { kind: "success" | "error"; text: string } | null;
 
 export function formatBackupTime(info: BackupInfo | null): string {
@@ -46,13 +69,14 @@ function Avatar({ profile }: { profile: GoogleProfile }) {
 }
 
 /** Nút đăng nhập Google ở góc phải; đăng nhập rồi thì là avatar mở menu sao lưu. */
-export function GoogleAccountMenu({ hasPassword, onRestored }: Props) {
+export function GoogleAccountMenu({ hasPassword, onRestored, onSynced }: Props) {
   const [profile, setProfile] = useState<GoogleProfile | null | undefined>(undefined);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<Busy>(null);
   const [backup, setBackup] = useState<BackupInfo | null>(null);
   const [message, setMessage] = useState<Message>(null);
-  const [confirmRestore, setConfirmRestore] = useState(false);
+  const [restorePreview, setRestorePreview] = useState<RestorePreview | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -72,7 +96,7 @@ export function GoogleAccountMenu({ hasPassword, onRestored }: Props) {
     const onDown = (e: MouseEvent) => {
       if (!rootRef.current?.contains(e.target as Node)) {
         setOpen(false);
-        setConfirmRestore(false);
+        setRestorePreview(null);
       }
     };
     window.addEventListener("mousedown", onDown);
@@ -100,19 +124,33 @@ export function GoogleAccountMenu({ hasPassword, onRestored }: Props) {
       return "Đã đăng nhập Google.";
     });
 
-  const doBackup = () =>
-    run("backup", async () => {
-      setBackup(await api.googleBackup());
-      return "Đã sao lưu vault lên Google Drive.";
+  const synced = (result: SyncResult) => {
+    setSyncing(false);
+    setBackup(result.backup);
+    setMessage({ kind: "success", text: syncMessage(result) });
+    setOpen(true);
+    onSynced();
+  };
+
+  const checkRestore = () =>
+    run("restore-check", async () => {
+      setRestorePreview(await api.googleRestorePreview());
     });
 
   const openFolder = () => run("folder", () => api.googleOpenBackupFolder());
 
   const doRestore = () =>
     run("restore", async () => {
-      await api.googleRestore();
+      if (!restorePreview) return;
+      try {
+        await api.googleRestore(restorePreview.backupVersion);
+      } catch (e) {
+        // Bản trên Drive đổi sau lúc so sánh: bỏ kết quả so sánh cũ để người dùng xem lại.
+        if (isAppError(e) && e.code === "BACKUP_CHANGED") setRestorePreview(null);
+        throw e;
+      }
       setOpen(false);
-      setConfirmRestore(false);
+      setRestorePreview(null);
       onRestored();
     });
 
@@ -163,21 +201,20 @@ export function GoogleAccountMenu({ hasPassword, onRestored }: Props) {
 
               <button
                 className="auth-btn auth-btn--primary"
-                onClick={doBackup}
-                disabled={busy !== null}
+                onClick={() => {
+                  // Đóng panel (z-index cao) để không đè lên hộp thoại đồng bộ.
+                  setOpen(false);
+                  setMessage(null);
+                  setSyncing(true);
+                }}
+                disabled={busy !== null || syncing}
                 title={
                   hasPassword
-                    ? "Lưu bản đã mã hoá bằng master password vào thư mục Authenticator Backup"
+                    ? "Gộp tài khoản giữa máy này và bản sao lưu (mã hoá bằng master password)"
                     : "Vault không mật khẩu: bản sao lưu là JSON không mã hoá, ai mở được file trên Drive cũng thấy secret"
                 }
               >
-                {busy === "backup" ? (
-                  "Đang sao lưu…"
-                ) : (
-                  <>
-                    <Icon name="cloud-upload" /> Sao lưu lên Google Drive
-                  </>
-                )}
+                <Icon name="sync" /> Đồng bộ với Google Drive
               </button>
 
               <button className="auth-btn" onClick={openFolder} disabled={busy !== null}>
@@ -190,32 +227,27 @@ export function GoogleAccountMenu({ hasPassword, onRestored }: Props) {
                 )}
               </button>
 
-              {confirmRestore ? (
-                <div className="confirm-box">
-                  <p className="hint">
-                    Toàn bộ tài khoản trên máy này sẽ được thay bằng bản sao lưu (bản hiện tại vẫn
-                    được giữ ở vault.json.bak).
-                  </p>
-                  <div className="panel__actions">
-                    <button className="auth-btn" onClick={() => setConfirmRestore(false)}>
-                      Huỷ
-                    </button>
-                    <button
-                      className="auth-btn auth-btn--danger"
-                      onClick={doRestore}
-                      disabled={busy !== null}
-                    >
-                      {busy === "restore" ? "Đang khôi phục…" : "Khôi phục"}
-                    </button>
-                  </div>
-                </div>
+              {restorePreview ? (
+                <RestoreConfirm
+                  preview={restorePreview}
+                  busy={busy === "restore"}
+                  onCancel={() => setRestorePreview(null)}
+                  onConfirm={doRestore}
+                />
               ) : (
                 <button
                   className="auth-btn"
-                  onClick={() => setConfirmRestore(true)}
+                  onClick={checkRestore}
                   disabled={busy !== null || !backup?.modifiedTime}
+                  title="Thay toàn bộ tài khoản trên máy này bằng bản sao lưu"
                 >
-                  <Icon name="download" /> Khôi phục từ Google Drive
+                  {busy === "restore-check" ? (
+                    "Đang so sánh…"
+                  ) : (
+                    <>
+                      <Icon name="download" /> Khôi phục từ Google Drive
+                    </>
+                  )}
                 </button>
               )}
             </>
@@ -234,6 +266,62 @@ export function GoogleAccountMenu({ hasPassword, onRestored }: Props) {
           )}
         </div>
       )}
+
+      {syncing && <SyncDialog onClose={() => setSyncing(false)} onSynced={synced} />}
+    </div>
+  );
+}
+
+function RestoreConfirm({
+  preview,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  preview: RestorePreview;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const missing = preview.missing ?? [];
+  return (
+    <div className="confirm-box">
+      <p className="hint">
+        Khôi phục sẽ <strong>thay toàn bộ</strong> {preview.localCount} tài khoản trên máy này bằng
+        bản sao lưu
+        {preview.backupCount !== null && ` (${preview.backupCount} tài khoản)`}.
+      </p>
+      {missing.length > 0 && (
+        <div className="sync-warning">
+          <p className="hint">
+            ⚠ {missing.length} tài khoản trên máy này không có trong bản sao lưu và sẽ mất khỏi danh
+            sách:
+          </p>
+          <ul className="restore-missing">
+            {missing.slice(0, MISSING_SHOWN).map((a) => (
+              <li key={a.id}>{a.issuer && a.label ? `${a.issuer} (${a.label})` : a.issuer || a.label}</li>
+            ))}
+            {missing.length > MISSING_SHOWN && <li>và {missing.length - MISSING_SHOWN} tài khoản khác</li>}
+          </ul>
+          <p className="hint">Muốn giữ cả hai bên thì dùng <strong>Đồng bộ</strong> thay vì khôi phục.</p>
+        </div>
+      )}
+      {preview.warnings.map((w) => (
+        <p key={w} className="sync-warning hint">
+          ⚠ {w}
+        </p>
+      ))}
+      <p className="auth-muted hint">
+        Vault hiện tại được lưu trong thư mục history (10 bản gần nhất) để lấy lại khi cần.
+      </p>
+      <div className="panel__actions">
+        <button className="auth-btn" onClick={onCancel} disabled={busy}>
+          Huỷ
+        </button>
+        <button className="auth-btn auth-btn--danger" onClick={onConfirm} disabled={busy}>
+          {busy ? "Đang khôi phục…" : missing.length > 0 ? "Vẫn khôi phục" : "Khôi phục"}
+        </button>
+      </div>
     </div>
   );
 }

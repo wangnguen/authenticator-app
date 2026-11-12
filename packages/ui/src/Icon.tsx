@@ -24,7 +24,9 @@ export type IconName =
   | "plus"
   | "puzzle"
   | "settings"
-  | "shield-lock";
+  | "shield-lock"
+  | "sync"
+  | "trash";
 
 interface Props {
   name: IconName;

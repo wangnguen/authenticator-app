@@ -66,6 +66,64 @@ export interface BackupInfo {
   size: number | null;
 }
 
+/** Tài khoản bị xoá ở một bên, chỉ xoá khi người dùng xác nhận. */
+export interface PendingDeletion {
+  id: string;
+  issuer: string;
+  label: string;
+  /**
+   * "local": đang có trên máy này, máy khác đã xoá.
+   * "remote": còn trong bản sao lưu, máy này đã xoá.
+   */
+  side: "local" | "remote";
+  /** Unix ms. */
+  deletedAt: number;
+  /** Bên kia đã xoá vĩnh viễn: đồng ý xoá thì không còn trong Thùng rác. */
+  permanent: boolean;
+}
+
+/** Xem trước đồng bộ với Google Drive. */
+export interface SyncPreview {
+  /** Phiên bản (thời điểm sửa) của bản sao lưu đã xem; null: chưa có bản nào. */
+  backupVersion: string | null;
+  backupExists: boolean;
+  /** Tài khoản sẽ được thêm vào máy này. */
+  added: AccountSummary[];
+  /** Tài khoản chỉ có trên máy này, sẽ được đưa lên bản sao lưu. */
+  uploaded: AccountSummary[];
+  pendingDeletions: PendingDeletion[];
+  warnings: string[];
+}
+
+export interface SyncResult {
+  added: number;
+  uploaded: number;
+  deleted: number;
+  kept: number;
+  backup: BackupInfo;
+}
+
+/** So sánh trước khi khôi phục (thay toàn bộ vault trên máy). */
+export interface RestorePreview {
+  /** Phiên bản (thời điểm sửa) của bản sao lưu đã so sánh. */
+  backupVersion: string;
+  localCount: number;
+  /** null: bản sao lưu dùng master password khác, chưa đọc được. */
+  backupCount: number | null;
+  /** Tài khoản trên máy không có trong bản sao lưu. null: không so sánh được. */
+  missing: AccountSummary[] | null;
+  warnings: string[];
+}
+
+/** Tài khoản trong Thùng rác (không có secret). */
+export interface TrashEntry {
+  id: string;
+  issuer: string;
+  label: string;
+  /** Unix ms. */
+  deletedAt: number;
+}
+
 export interface VaultStatus {
   exists: boolean;
   unlocked: boolean;
@@ -91,6 +149,10 @@ export type ErrorCode =
   | "NOT_FOUND"
   | "BAD_REQUEST"
   | "APP_NOT_RUNNING"
+  | "INVALID_BACKUP"
+  | "NO_BACKUP"
+  | "BACKUP_PASSWORD"
+  | "BACKUP_CHANGED"
   | "INTERNAL";
 
 export function isAppError(value: unknown): value is AppError {

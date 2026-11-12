@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod browser_extension;
 mod commands;
 mod dpapi;
 mod error;
@@ -11,6 +12,7 @@ mod migration;
 mod native_host;
 mod otpauth;
 mod register;
+mod sync;
 mod totp;
 mod vault;
 

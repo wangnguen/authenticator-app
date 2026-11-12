@@ -36,28 +36,68 @@ pnpm dev:desktop
 pnpm dev:extension
 ```
 
-Load extension:
+Load extension (khi dev):
 
 1. Mở `chrome://extensions` (hoặc `edge://extensions`), bật **Developer mode**.
 2. Bấm **Load unpacked** rồi chọn thư mục `extension/dist`.
 3. Extension ID sẽ là `dhlimcjaejobpdoekahaiiojdgmmgkno`, cố định nhờ trường `key` trong
    `extension/public/manifest.json`.
 
+### Cài extension từ app (khi chưa lên Store)
+
+`build.rs` nhúng `extension/dist` vào exe (`pnpm dev:desktop` / `pnpm build:desktop` build extension
+trước). Trong app, nút 🧩 **Kết nối extension → Cài vào Chrome / Cài vào Edge**:
+
+1. Giải nén extension vào `%APPDATA%\com.authenticator.app\extension\` và copy đường dẫn đó.
+2. Mở `chrome://extensions` / `edge://extensions` (tìm trình duyệt qua registry *App Paths*).
+3. Hướng dẫn người dùng bật **Developer mode** → **Load unpacked** → dán đường dẫn đã copy.
+
+Chrome không cho app bên ngoài tự cài extension ngoài Store, nên vẫn cần các thao tác trên.
+Khi app cập nhật, thư mục extension đã giải nén được cập nhật lúc khởi động; trình duyệt nạp bản
+mới khi bấm Reload hoặc mở lại trình duyệt. Chưa build extension thì app vẫn build được, chỉ không
+có nút cài (build.rs in cảnh báo).
+
 App desktop **tự đăng ký native messaging host** (HKCU, không cần quyền admin) mỗi lần khởi động.
 Nếu Chrome/Edge đang mở từ trước thì nên mở lại extension popup sau khi app chạy.
 
-## Đăng nhập Google (sao lưu lên Google Drive)
+## Đăng nhập Google (đồng bộ qua Google Drive)
 
-Nút **Đăng nhập Google** (logo G ở góc phải) dùng để sao lưu / khôi phục vault vào thư mục
-**`Authenticator Backup`** trong My Drive (file `vault-backup.json`, mỗi lần sao lưu ghi đè).
+Nút **Đăng nhập Google** (logo G ở góc phải) dùng để đồng bộ / khôi phục vault qua thư mục
+**`Authenticator Backup`** trong My Drive (file `vault-backup.json`).
 Thư mục này xem/tải được trên drive.google.com; trong menu có nút **📂 Mở thư mục trên Drive**.
 App dùng scope `drive.file`: chỉ thấy file do chính nó tạo, không đọc được file khác trong Drive.
 
-- Vault có master password: sao lưu nguyên file vault đã mã hoá, khôi phục xong cần nhập master
-  password của bản sao lưu.
-- Vault không mật khẩu: key do Windows DPAPI giữ, không mang sang máy khác được, nên sao lưu
-  danh sách tài khoản dạng **JSON không mã hoá**: ai mở được file trên Drive (hoặc được bạn chia
-  sẻ file) đều thấy secret 2FA. Khôi phục xong vault mở sẵn, không cần mật khẩu.
+- Vault có master password: bản trên Drive được mã hoá bằng master password, khôi phục xong cần
+  nhập master password của bản sao lưu.
+- Vault không mật khẩu: key do Windows DPAPI giữ, không mang sang máy khác được, nên bản trên
+  Drive là danh sách tài khoản dạng **JSON không mã hoá**: ai mở được file trên Drive (hoặc được bạn
+  chia sẻ file) đều thấy secret 2FA. Khôi phục xong vault mở sẵn, không cần mật khẩu.
+  (Nếu bản trên Drive đang mã hoá thì đồng bộ hỏi master password của nó và giữ nguyên mã hoá.)
+
+### Đồng bộ nhiều máy (`src-tauri/src/sync.rs`)
+
+**Đồng bộ với Google Drive** tải bản trên Drive về, gộp với vault trên máy rồi tải bản đã gộp lên.
+Gộp theo `id` của từng tài khoản:
+
+- Tài khoản chỉ có ở một bên → thêm vào bên kia.
+- Tài khoản bị xoá ở một bên → **không tự xoá**: hộp thoại liệt kê từng tài khoản để đánh dấu xoá.
+  Tài khoản bị xoá ở máy khác mặc định được **giữ lại** (phải tự đánh dấu mới xoá khỏi máy này);
+  tài khoản bạn đã xoá trên máy này mặc định được đánh dấu. Không đánh dấu = giữ lại ở mọi máy.
+- Đồng bộ / khôi phục chỉ áp dụng đúng bản trên Drive đã xem trước; nếu máy khác vừa ghi bản mới
+  thì dừng lại để xem lại.
+- Cùng một secret thêm riêng trên hai máy → gộp thành một.
+- Bản trên Drive dùng master password khác → hỏi master password đó. Nếu trùng mật khẩu của máy
+  này (chỉ khác salt) thì hai máy dùng chung key, lần sau không hỏi nữa; nếu khác thì cảnh báo là
+  bản trên Drive sẽ chuyển sang mật khẩu của máy này.
+- Trước khi tải lên, app kiểm tra bản trên Drive có vừa bị máy khác ghi không; có thì dừng và
+  yêu cầu đồng bộ lại để không đè mất thay đổi của máy kia.
+
+Xoá tài khoản là chuyển vào **Thùng rác** (nút ở cuối danh sách): khôi phục được, hoặc xoá vĩnh
+viễn (bỏ hẳn secret, lan sang các máy khác khi đồng bộ). Mỗi lần đồng bộ/khôi phục làm thay đổi
+vault, bản cũ được lưu trong `%APPDATA%\com.authenticator.app\history\` (giữ 10 bản gần nhất).
+
+**Khôi phục từ Google Drive** (thay toàn bộ vault) hiện trước số tài khoản trên máy sẽ mất, kèm
+cảnh báo nếu vault sẽ mất/đổi master password.
 
 Cần tạo OAuth Client ID một lần (khoảng 5 phút):
 
@@ -91,7 +131,7 @@ Lưu ý:
 - Đăng nhập dùng OAuth cho app desktop: mở trình duyệt, Google chuyển hướng về
   `http://127.0.0.1:<cổng ngẫu nhiên>` do app mở tạm, có PKCE.
 - Máy mới: ở màn hình tạo vault bấm **Khôi phục từ Google Drive**, sau đó nhập master password
-  của bản sao lưu. Khôi phục trên máy đang có vault thì vault cũ được giữ ở `vault.json.bak`.
+  của bản sao lưu. Khôi phục trên máy đang có vault thì vault cũ được giữ trong thư mục `history`.
 
 ### Publish app để mọi tài khoản Google đăng nhập được
 
@@ -134,7 +174,7 @@ Thư mục [`docs/`](docs/) là website cho GitHub Pages: trang chủ, chính s�
 Build trên máy:
 
 ```bash
-pnpm build:desktop     # installer NSIS trong desktop/src-tauri/target/release/bundle/nsis
+pnpm build:desktop     # build extension rồi installer NSIS (kèm extension) trong desktop/src-tauri/target/release/bundle/nsis
 pnpm build:extension   # zip thư mục extension/dist để đưa lên Chrome Web Store / Edge Add-ons
 ```
 
@@ -202,13 +242,15 @@ Extension popup ──connectNative──▶ authenticator.exe (chế độ nati
   (nhiều tài khoản một lần, tự bỏ qua tài khoản trùng; dán nhiều link mỗi dòng một link)
 - Quét ảnh QR: chọn **nhiều ảnh** một lúc, **Ctrl+V** ảnh chụp màn hình hoặc **kéo thả**;
   mỗi ảnh đọc được nhiều QR và tài khoản được import ngay
-- Danh sách mã có đồng hồ đếm ngược, bấm để copy, tìm kiếm, xoá
+- Danh sách mã có đồng hồ đếm ngược, bấm để copy, tìm kiếm, xoá (vào Thùng rác, khôi phục được)
+- Đồng bộ nhiều máy qua Google Drive, xoá ở đâu cũng phải xác nhận trước khi mất khỏi máy khác
 - Extension: xem và copy mã, **điền mã vào trang** đang mở, **quét QR trên trang** để thêm tài khoản
+- Cài extension từ app (Load unpacked có hướng dẫn) khi extension chưa có trên Store
 
 ## Kiểm thử
 
 ```bash
-cd desktop/src-tauri && cargo test   # RFC 6238, otpauth/migration, vault, DPAPI, OAuth loopback, native messaging
+cd desktop/src-tauri && cargo test   # RFC 6238, otpauth/migration, vault, đồng bộ, DPAPI, OAuth loopback, native messaging
 pnpm test                            # đọc nhiều QR trong một ảnh (packages/ui)
 pnpm typecheck
 ```
@@ -216,7 +258,8 @@ pnpm typecheck
 ## Hướng phát triển tiếp
 
 - Tự khoá vault sau một khoảng thời gian không dùng
-- Tự sao lưu lên Google Drive mỗi khi thêm/xoá tài khoản
+- Tự đồng bộ với Google Drive khi mở app và sau khi thêm/xoá tài khoản (chỉ tự chạy khi không có
+  gì cần xác nhận)
 - Xác nhận trong app desktop khi extension lần đầu xin mã (pairing)
 - Xoá registry key native host khi gỡ cài đặt (NSIS uninstall hook)
 - System tray: chạy ẩn khi đóng cửa sổ để extension luôn kết nối được

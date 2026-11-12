@@ -36,7 +36,8 @@ export function RestoreFromGoogle({ onRestored }: Props) {
 
   const restore = () =>
     run(async () => {
-      await api.googleRestore();
+      // Máy chưa có vault nên không có gì để mất, không cần so phiên bản.
+      await api.googleRestore(null);
       onRestored();
     });
 
