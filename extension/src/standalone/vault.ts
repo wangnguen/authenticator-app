@@ -169,9 +169,10 @@ export async function listCodes(): Promise<CodeEntry[]> {
   }));
 }
 
-/** Group (chưa xoá) sắp theo tên. Thêm/sửa group làm trong app desktop. */
+/** Group (chưa xoá) theo thứ tự trên thanh lọc. Thêm/sửa/sắp xếp group làm trong app desktop. */
 export async function listGroups(): Promise<Group[]> {
   const { data } = await requireOpen();
+  const orderOf = new Map(data.groups.map((g) => [g.id, g.order ?? 0]));
   return data.groups
     .filter((g) => g.deletedAt === undefined)
     .map((g) => ({
@@ -180,7 +181,10 @@ export async function listGroups(): Promise<Group[]> {
       hidden: g.hidden,
       count: data.accounts.filter((a) => a.groupIds?.includes(g.id)).length,
     }))
-    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+    .sort((a, b) => {
+      const order = (orderOf.get(a.id) ?? 0) - (orderOf.get(b.id) ?? 0);
+      return order !== 0 ? order : a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    });
 }
 
 /** Thêm tài khoản từ link (QR quét trên trang), bỏ qua tài khoản trùng secret. */
@@ -194,11 +198,15 @@ export async function importUris(input: string): Promise<ImportResult> {
     const vault = await requireOpen();
     const added: AccountSummary[] = [];
     let duplicates = 0;
+    // Danh sách đã được sắp xếp bằng tay thì tài khoản mới đứng cuối (như app desktop).
+    const maxOrder = Math.max(0, ...vault.data.accounts.map((a) => a.order ?? 0));
+    let nextOrder = maxOrder > 0 ? maxOrder + 1 : 0;
     for (const account of accounts) {
       if (vault.data.accounts.some((a) => a.secret === account.secret)) {
         duplicates++;
         continue;
       }
+      if (nextOrder > 0) account.order = nextOrder++;
       vault.data.accounts.push(account);
       added.push({ id: account.id, issuer: account.issuer, label: account.label });
     }

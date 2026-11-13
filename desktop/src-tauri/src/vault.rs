@@ -14,6 +14,7 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use argon2::{Argon2, Params, Version};
 use data_encoding::{Encoding, BASE32_NOPAD, BASE64};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -62,6 +63,14 @@ pub(crate) struct Account {
     /// `updated_at` để đồng bộ lấy đúng bản mới nhất.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) group_ids: Vec<String>,
+    /// Vị trí trong danh sách (kéo thả để đổi), nhỏ đứng trước; bằng nhau thì theo tên. Chưa từng
+    /// sắp xếp thì mọi tài khoản là 0 (danh sách theo tên) và không ghi ra file.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub(crate) order: i64,
+}
+
+fn is_zero(value: &i64) -> bool {
+    *value == 0
 }
 
 impl Account {
@@ -100,7 +109,10 @@ pub(crate) struct Group {
     /// Ẩn: tài khoản chỉ thuộc các group ẩn không hiện trong danh sách "Tất cả".
     #[serde(default)]
     pub(crate) hidden: bool,
-    /// Lần đổi tên / ẩn hiện cuối, Unix ms.
+    /// Vị trí trên thanh lọc (kéo thả để đổi), nhỏ đứng trước; bằng nhau thì theo tên.
+    #[serde(default)]
+    pub(crate) order: i64,
+    /// Lần đổi tên / ẩn hiện / đổi vị trí cuối, Unix ms.
     pub(crate) updated_at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) deleted_at: Option<u64>,
@@ -975,8 +987,39 @@ impl Vault {
                 }
             })
             .collect();
-        entries.sort_by_key(|e| (e.issuer.to_lowercase(), e.label.to_lowercase()));
+        let order: HashMap<&str, i64> =
+            data.accounts.iter().map(|a| (a.id.as_str(), a.order)).collect();
+        entries.sort_by_cached_key(|e| {
+            (
+                order.get(e.id.as_str()).copied().unwrap_or(0),
+                e.issuer.to_lowercase(),
+                e.label.to_lowercase(),
+            )
+        });
         Ok(entries)
+    }
+
+    /// Đổi thứ tự tài khoản theo `ids` (kéo thả trong danh sách). Tài khoản không có trong `ids`
+    /// giữ thứ tự cũ và đứng sau. Chỉ tài khoản đổi vị trí mới được đánh dấu thay đổi (để đồng bộ).
+    pub fn reorder_accounts(&mut self, ids: &[String]) -> AppResult<()> {
+        let current: Vec<String> = self.codes()?.into_iter().map(|e| e.id).collect();
+        let positions = new_positions(&current, ids);
+        let now = now_ms();
+        let unlocked = self.unlocked_mut()?;
+        let mut changed = false;
+        for account in &mut unlocked.data.accounts {
+            if let Some(&position) = positions.get(account.id.as_str()) {
+                if account.order != position {
+                    account.order = position;
+                    account.updated_at = now;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.save()?;
+        }
+        Ok(())
     }
 
     pub fn add(&mut self, new: NewAccount) -> AppResult<AccountSummary> {
@@ -996,11 +1039,24 @@ impl Vault {
             .collect::<AppResult<Vec<_>>>()?;
 
         let unlocked = self.unlocked_mut()?;
+        // Đã sắp xếp danh sách bằng tay thì tài khoản mới đứng cuối; chưa thì giữ 0 (theo tên).
+        let mut next_order = unlocked
+            .data
+            .accounts
+            .iter()
+            .map(|a| a.order)
+            .max()
+            .filter(|&max| max > 0)
+            .map(|max| max + 1);
         let mut result = ImportResult::default();
-        for account in accounts {
+        for mut account in accounts {
             if unlocked.data.accounts.iter().any(|a| a.secret == account.secret) {
                 result.duplicates += 1;
                 continue;
+            }
+            if let Some(order) = next_order.as_mut() {
+                account.order = *order;
+                *order += 1;
             }
             result.added.push(AccountSummary {
                 id: account.id.clone(),
@@ -1057,22 +1113,43 @@ impl Vault {
         Ok(result)
     }
 
-    /// Các group (chưa xoá), sắp theo tên.
+    /// Các group (chưa xoá), theo thứ tự trên thanh lọc.
     pub fn groups(&self) -> AppResult<Vec<GroupInfo>> {
         let data = &self.unlocked()?.data;
-        let mut groups: Vec<GroupInfo> = data
-            .groups
-            .iter()
-            .filter(|g| g.active())
+        let mut active: Vec<&Group> = data.groups.iter().filter(|g| g.active()).collect();
+        active.sort_by_key(|g| (g.order, g.name.to_lowercase()));
+        Ok(active
+            .into_iter()
             .map(|g| GroupInfo {
                 id: g.id.clone(),
                 name: g.name.clone(),
                 hidden: g.hidden,
                 count: data.accounts.iter().filter(|a| a.group_ids.contains(&g.id)).count(),
             })
-            .collect();
-        groups.sort_by_key(|g| g.name.to_lowercase());
-        Ok(groups)
+            .collect())
+    }
+
+    /// Đổi thứ tự group theo `ids` (kéo thả trên thanh lọc). Group không có trong `ids` giữ thứ tự
+    /// cũ và đứng sau. Chỉ group đổi vị trí mới được đánh dấu thay đổi (để đồng bộ).
+    pub fn reorder_groups(&mut self, ids: &[String]) -> AppResult<Vec<GroupInfo>> {
+        let current: Vec<String> = self.groups()?.into_iter().map(|g| g.id).collect();
+        let positions = new_positions(&current, ids);
+        let now = now_ms();
+        let unlocked = self.unlocked_mut()?;
+        let mut changed = false;
+        for group in &mut unlocked.data.groups {
+            if let Some(&position) = positions.get(group.id.as_str()) {
+                if group.order != position {
+                    group.order = position;
+                    group.updated_at = now;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.save()?;
+        }
+        self.groups()
     }
 
     fn group_info(&self, id: &str) -> AppResult<GroupInfo> {
@@ -1114,10 +1191,21 @@ impl Vault {
 
     pub fn create_group(&mut self, name: &str) -> AppResult<GroupInfo> {
         let name = self.group_name(name, None)?;
+        // Group mới đứng cuối thanh lọc.
+        let order = self
+            .unlocked()?
+            .data
+            .groups
+            .iter()
+            .filter(|g| g.active())
+            .map(|g| g.order + 1)
+            .max()
+            .unwrap_or(0);
         let group = Group {
             id: uuid::Uuid::new_v4().to_string(),
             name,
             hidden: false,
+            order,
             updated_at: now_ms(),
             deleted_at: None,
         };
@@ -1330,7 +1418,27 @@ fn build_account(new: NewAccount) -> AppResult<Account> {
         created_at: now,
         updated_at: now,
         group_ids: Vec::new(),
+        order: 0,
     })
+}
+
+/// Vị trí mới: `ids` (chỉ những id có trong `current`, bỏ trùng) trước, phần còn lại của
+/// `current` giữ thứ tự cũ, đứng sau.
+fn new_positions<'a>(current: &'a [String], ids: &[String]) -> HashMap<&'a str, i64> {
+    let mut order: Vec<&'a str> = Vec::with_capacity(current.len());
+    for id in ids {
+        if let Some(found) = current.iter().find(|c| *c == id) {
+            if !order.contains(&found.as_str()) {
+                order.push(found);
+            }
+        }
+    }
+    for id in current {
+        if !order.contains(&id.as_str()) {
+            order.push(id);
+        }
+    }
+    order.into_iter().enumerate().map(|(i, id)| (id, i as i64)).collect()
 }
 
 fn normalize_secret(secret: &str) -> AppResult<String> {
@@ -1821,7 +1929,7 @@ mod tests {
         let groups = vault.groups().unwrap();
         assert_eq!(
             groups.iter().map(|g| (g.name.as_str(), g.count)).collect::<Vec<_>>(),
-            [("Cá nhân", 2), ("Công việc", 1)]
+            [("Công việc", 1), ("Cá nhân", 2)]
         );
         let codes = vault.codes().unwrap();
         let entry = codes.iter().find(|c| c.id == github).unwrap();
@@ -1910,6 +2018,64 @@ mod tests {
         assert_eq!(groups.len(), 1);
         assert_eq!((groups[0].name.as_str(), groups[0].hidden, groups[0].count), ("Công việc", true, 1));
         assert_eq!(vault.codes().unwrap()[0].group_ids, ["g-work"]);
+        cleanup(&[&vault]);
+    }
+
+    #[test]
+    fn groups_keep_drag_and_drop_order() {
+        let mut vault = temp_vault();
+        vault.create(None).unwrap();
+        let a = vault.create_group("Zeta").unwrap().id;
+        let b = vault.create_group("Alpha").unwrap().id;
+        let c = vault.create_group("Mid").unwrap().id;
+        let names = |v: &Vault| v.groups().unwrap().into_iter().map(|g| g.name).collect::<Vec<_>>();
+        // Group mới đứng cuối, không tự sắp theo tên.
+        assert_eq!(names(&vault), ["Zeta", "Alpha", "Mid"]);
+
+        vault.reorder_groups(&[c.clone(), a.clone(), b.clone()]).unwrap();
+        assert_eq!(names(&vault), ["Mid", "Zeta", "Alpha"]);
+
+        // Thiếu id hoặc id lạ: phần còn lại giữ thứ tự cũ, đứng sau.
+        vault.reorder_groups(&[b.clone(), "nope".into()]).unwrap();
+        assert_eq!(names(&vault), ["Alpha", "Mid", "Zeta"]);
+
+        let path = vault.path.clone();
+        let mut reopened = Vault::new(path);
+        reopened.auto_unlock().unwrap();
+        assert_eq!(names(&reopened), ["Alpha", "Mid", "Zeta"]);
+        cleanup(&[&vault]);
+    }
+
+    #[test]
+    fn accounts_keep_drag_and_drop_order() {
+        let mut vault = temp_vault();
+        vault.create(None).unwrap();
+        let named = |issuer: &str, secret: &str| NewAccount {
+            issuer: issuer.into(),
+            ..account_with(secret)
+        };
+        vault.add(named("Zeta", "JBSWY3DPEHPK3PXP")).unwrap();
+        vault.add(named("Alpha", "JBSWY3DPEHPK3PXQ")).unwrap();
+        vault.add(named("Mid", "JBSWY3DPEHPK3PXR")).unwrap();
+        let names = |v: &Vault| v.codes().unwrap().into_iter().map(|e| e.issuer).collect::<Vec<_>>();
+        let id = |v: &Vault, name: &str| {
+            v.codes().unwrap().into_iter().find(|e| e.issuer == name).unwrap().id
+        };
+        // Chưa sắp xếp: theo tên.
+        assert_eq!(names(&vault), ["Alpha", "Mid", "Zeta"]);
+
+        let (z, m) = (id(&vault, "Zeta"), id(&vault, "Mid"));
+        vault.reorder_accounts(&[z, "nope".into(), m]).unwrap();
+        assert_eq!(names(&vault), ["Zeta", "Mid", "Alpha"]);
+
+        // Đã sắp xếp thì tài khoản mới đứng cuối.
+        vault.add(named("Beta", "JBSWY3DPEHPK3PXS")).unwrap();
+        assert_eq!(names(&vault), ["Zeta", "Mid", "Alpha", "Beta"]);
+
+        let path = vault.path.clone();
+        let mut reopened = Vault::new(path);
+        reopened.auto_unlock().unwrap();
+        assert_eq!(names(&reopened), ["Zeta", "Mid", "Alpha", "Beta"]);
         cleanup(&[&vault]);
     }
 }

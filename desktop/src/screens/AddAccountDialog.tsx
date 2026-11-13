@@ -12,7 +12,7 @@ import {
   type ImportPreview,
   type NewAccount,
 } from "@auth/core";
-import { Icon, type QrScanResult, scanOtpQrImages } from "@auth/ui";
+import { Icon, missingBatchNote, type QrScanResult, scanOtpQrImages } from "@auth/ui";
 import { api } from "../api";
 import { CameraScanDialog } from "./CameraScanDialog";
 import { ImportPreviewDialog } from "./ImportPreviewDialog";
@@ -22,6 +22,11 @@ type Tab = "uri" | "manual";
 interface Props {
   onClose: () => void;
   onAdded: (message: string) => void;
+  /**
+   * Đã thêm tài khoản nhưng giữ hộp thoại mở (ảnh xuất từ Google Authenticator còn thiếu QR, cần
+   * thêm ảnh tiếp theo): màn hình chính chỉ tải lại danh sách.
+   */
+  onImported: () => void;
 }
 
 /** Kết quả đọc ảnh dán vào, chờ người dùng bấm "Thêm" trong popup xem trước. */
@@ -63,7 +68,7 @@ function imageFiles(files: FileList | File[]): File[] {
   return Array.from(files).filter((f) => f.type.startsWith("image/"));
 }
 
-export function AddAccountDialog({ onClose, onAdded }: Props) {
+export function AddAccountDialog({ onClose, onAdded, onImported }: Props) {
   const [tab, setTab] = useState<Tab>("uri");
   const [uri, setUri] = useState("");
   const [account, setAccount] = useState<NewAccount>(EMPTY_ACCOUNT);
@@ -74,6 +79,24 @@ export function AddAccountDialog({ onClose, onAdded }: Props) {
   const [pending, setPending] = useState<PendingImport | null>(null);
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [camera, setCamera] = useState(false);
+  /** Đã thêm xong một phần, nhắc thêm QR còn thiếu (hộp thoại vẫn mở). */
+  const [partial, setPartial] = useState<string | null>(null);
+
+  /**
+   * Thêm xong: đóng hộp thoại; nhưng nếu bản xuất của Google Authenticator còn QR chưa thêm thì giữ
+   * mở và nhắc, để thêm tiếp ảnh QR sau (mỗi QR chỉ chứa tối đa 10 tài khoản).
+   */
+  const finish = (message: string, uris: string[]) => {
+    const missing = missingBatchNote(uris);
+    if (!missing) {
+      onAdded(message);
+      return;
+    }
+    setPending(null);
+    setBusy(false);
+    setPartial(`${message} Lưu ý: ${missing}.`);
+    onImported();
+  };
 
   const update = <K extends keyof NewAccount>(key: K, value: NewAccount[K]) =>
     setAccount((a) => ({ ...a, [key]: value }));
@@ -84,6 +107,7 @@ export function AddAccountDialog({ onClose, onAdded }: Props) {
     if (images.length === 0 || busy) return;
     setBusy(true);
     setError(null);
+    setPartial(null);
     try {
       const scan = await scanOtpQrImages(images);
       if (scan.uris.length === 0) {
@@ -91,7 +115,7 @@ export function AddAccountDialog({ onClose, onAdded }: Props) {
         return;
       }
       const result = await api.importUri(scan.uris.join("\n"));
-      onAdded(describeImport(result) + scanNote(scan));
+      finish(describeImport(result) + scanNote(scan), scan.uris);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -163,7 +187,7 @@ export function AddAccountDialog({ onClose, onAdded }: Props) {
     try {
       const result = await api.importUri(pending.uris);
       const note = pending.notes.length ? ` (${pending.notes.join(", ")})` : "";
-      onAdded(describeImport(result) + note);
+      finish(describeImport(result) + note, pending.uris.split("\n"));
     } catch (err) {
       setPendingError(errorMessage(err));
       setBusy(false);
@@ -329,6 +353,7 @@ export function AddAccountDialog({ onClose, onAdded }: Props) {
           </>
         )}
 
+        {partial && <p className="auth-success partial-import">{partial}</p>}
         {error && <p className="auth-error">{error}</p>}
 
         <div className="dialog__actions">

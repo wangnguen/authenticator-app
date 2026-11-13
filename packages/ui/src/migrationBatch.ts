@@ -62,3 +62,30 @@ export function scanProgress(uris: string[]): ScanProgress {
     plain,
   };
 }
+
+/**
+ * Nhắc thêm các QR còn thiếu khi import ảnh: Google Authenticator chia bản xuất thành nhiều QR,
+ * mỗi QR tối đa 10 tài khoản. `null` nếu đủ (hoặc không phải link xuất của Google Authenticator).
+ * Ví dụ: "ảnh có QR 1/2 của Google Authenticator (mỗi QR tối đa 10 tài khoản), nhớ thêm cả QR 2/2".
+ */
+export function missingBatchNote(uris: string[]): string | null {
+  const seen = new Map<number, { size: number; indexes: Set<number> }>();
+  for (const uri of uris) {
+    const batch = migrationBatch(uri);
+    if (!batch || batch.size <= 1) continue;
+    const entry = seen.get(batch.id) ?? { size: batch.size, indexes: new Set<number>() };
+    entry.indexes.add(batch.index);
+    seen.set(batch.id, entry);
+  }
+  for (const { size, indexes } of seen.values()) {
+    if (indexes.size >= size) continue;
+    const label = (i: number) => `${i + 1}/${size}`;
+    const have = [...indexes].sort((a, b) => a - b).map(label);
+    const missing = Array.from({ length: size }, (_, i) => i).filter((i) => !indexes.has(i)).map(label);
+    return (
+      `ảnh có QR ${have.join(", ")} của Google Authenticator (mỗi QR tối đa 10 tài khoản), ` +
+      `nhớ thêm cả QR ${missing.join(", ")}: bấm "Tiếp" trên điện thoại`
+    );
+  }
+  return null;
+}

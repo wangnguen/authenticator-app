@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { type CodeEntry, errorMessage, filterEntries, type Group } from "@auth/core";
-import { CodeList, GroupBar, Icon, SearchBox, useCodes } from "@auth/ui";
+import { CodeList, GroupBar, Icon, mergeOrder, SearchBox, useCodes } from "@auth/ui";
 import { api } from "../api";
 import { AccountGroupsDialog } from "./AccountGroupsDialog";
 import { AddAccountDialog } from "./AddAccountDialog";
@@ -10,6 +10,24 @@ import { GroupsDialog } from "./GroupsDialog";
 import { SecurityDialog } from "./SecurityDialog";
 import { TrashDialog } from "./TrashDialog";
 
+/** Filter group đang chọn, nhớ qua các lần mở app. */
+const FILTER_KEY = "auth.groupFilter";
+
+function savedFilter(): { selected: string | null; showHidden: boolean } {
+  try {
+    const value = JSON.parse(localStorage.getItem(FILTER_KEY) ?? "{}") as {
+      selected?: unknown;
+      showHidden?: unknown;
+    };
+    return {
+      selected: typeof value.selected === "string" ? value.selected : null,
+      showHidden: value.showHidden === true,
+    };
+  } catch {
+    return { selected: null, showHidden: false };
+  }
+}
+
 interface Props {
   /** false: vault không mật khẩu, ẩn nút khoá vì mở lại không cần gì. */
   hasPassword: boolean;
@@ -18,12 +36,12 @@ interface Props {
 }
 
 export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
-  const { entries, error, loading, now, refresh } = useCodes(api.listCodes);
+  const { entries, error, loading, now, refresh, reorder } = useCodes(api.listCodes);
   const [query, setQuery] = useState("");
-  const [groups, setGroups] = useState<Group[]>([]);
-  /** Group đang chọn trên thanh lọc; null = "Tất cả". */
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
-  const [showHidden, setShowHidden] = useState(false);
+  const [groups, setGroups] = useState<Group[] | null>(null);
+  /** Group đang chọn trên thanh lọc; null = "Tất cả". Nhớ qua các lần mở app. */
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(() => savedFilter().selected);
+  const [showHidden, setShowHidden] = useState(() => savedFilter().showHidden);
   const [groupsOpen, setGroupsOpen] = useState(false);
   const [groupsFor, setGroupsFor] = useState<CodeEntry | null>(null);
   const [adding, setAdding] = useState(false);
@@ -52,7 +70,7 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
   );
 
   const refreshGroups = useCallback(
-    () => api.listGroups().then(setGroups, () => setGroups([])),
+    () => api.listGroups().then(setGroups, () => setGroups((current) => current ?? [])),
     [],
   );
 
@@ -68,15 +86,54 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
 
   // Group đang chọn bị xoá, hoặc bị ẩn trong lúc không hiện group ẩn: quay về "Tất cả".
   useEffect(() => {
+    // Chờ tải xong danh sách group, không thì filter đã lưu bị xoá ngay lúc mở app.
+    if (!groups) return;
     const group = groups.find((g) => g.id === selectedGroup);
     if (selectedGroup && (!group || (group.hidden && !showHidden))) setSelectedGroup(null);
   }, [groups, selectedGroup, showHidden]);
 
+  useEffect(() => {
+    localStorage.setItem(FILTER_KEY, JSON.stringify({ selected: selectedGroup, showHidden }));
+  }, [selectedGroup, showHidden]);
+
+  /** Kéo thả chip: đổi thứ tự trên giao diện ngay, rồi lưu (và tự đồng bộ). */
+  const reorderGroups = async (ids: string[]) => {
+    setGroups((current) =>
+      current ? ids.map((id) => current.find((g) => g.id === id)).filter((g): g is Group => !!g) : current,
+    );
+    try {
+      setGroups(await api.reorderGroups(ids));
+      changed();
+    } catch (e) {
+      setActionError(errorMessage(e));
+      void refreshGroups();
+    }
+  };
+
+  /** Kéo thả thẻ tài khoản: `shown` là thứ tự mới của các thẻ đang hiện (đang lọc theo group thì
+   * tài khoản ngoài group giữ nguyên chỗ). */
+  const reorderAccounts = async (shown: string[]) => {
+    const ids = mergeOrder(
+      entries.map((e) => e.id),
+      shown,
+    );
+    reorder(ids);
+    try {
+      await api.reorderAccounts(ids);
+      changed();
+    } catch (e) {
+      setActionError(errorMessage(e));
+      void refresh();
+    }
+  };
+
+  const groupList = groups ?? [];
+
   const visible = useMemo(
-    () => filterEntries(entries, groups, { selected: selectedGroup, showHidden, query }),
-    [entries, groups, selectedGroup, showHidden, query],
+    () => filterEntries(entries, groupList, { selected: selectedGroup, showHidden, query }),
+    [entries, groupList, selectedGroup, showHidden, query],
   );
-  const hiddenAccounts = entries.length - filterEntries(entries, groups, {
+  const hiddenAccounts = entries.length - filterEntries(entries, groupList, {
     selected: null,
     showHidden: false,
     query: "",
@@ -164,18 +221,19 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
       <SearchBox value={query} onChange={setQuery} />
 
       <GroupBar
-        groups={groups}
+        groups={groupList}
         selected={selectedGroup}
         onSelect={setSelectedGroup}
         showHidden={showHidden}
         onToggleHidden={() => setShowHidden((v) => !v)}
+        onReorder={(ids) => void reorderGroups(ids)}
         actions={
           <button
             className="auth-chip auth-chip--ghost"
             onClick={() => setGroupsOpen(true)}
             title="Tạo, đổi tên, ẩn/hiện, xoá group"
           >
-            <Icon name="tag" /> {groups.length === 0 ? "Tạo group" : "Quản lý"}
+            <Icon name="tag" /> {groupList.length === 0 ? "Tạo group" : "Quản lý"}
           </button>
         }
       />
@@ -188,7 +246,8 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
           entries={visible}
           now={now}
           query={query}
-          groups={groups}
+          groups={groupList}
+          onReorder={(ids) => void reorderAccounts(ids)}
           emptyText={
             selectedGroup
               ? 'Group này chưa có tài khoản. Bấm nút nhãn trên một tài khoản để thêm vào group.'
@@ -259,7 +318,7 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
       {groupsFor && (
         <AccountGroupsDialog
           entry={groupsFor}
-          groups={groups}
+          groups={groupList}
           onClose={() => {
             setGroupsFor(null);
             // Có thể đã tạo group mới trong hộp thoại rồi bấm Huỷ.
@@ -291,6 +350,10 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
             setNotice(message);
             changed();
             void refresh();
+          }}
+          onImported={() => {
+            changed();
+            void reload();
           }}
         />
       )}

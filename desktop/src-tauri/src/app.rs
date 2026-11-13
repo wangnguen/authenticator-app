@@ -165,6 +165,8 @@ pub fn run() {
             commands::rename_group,
             commands::set_group_hidden,
             commands::delete_group,
+            commands::reorder_groups,
+            commands::reorder_accounts,
             commands::set_account_groups,
             commands::add_account,
             commands::preview_uri,

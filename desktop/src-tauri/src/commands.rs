@@ -95,6 +95,16 @@ pub fn set_group_hidden(vault: State<'_, SharedVault>, id: String, hidden: bool)
 }
 
 #[tauri::command]
+pub fn reorder_groups(vault: State<'_, SharedVault>, ids: Vec<String>) -> AppResult<Vec<GroupInfo>> {
+    with_vault(&vault, |v| v.reorder_groups(&ids))
+}
+
+#[tauri::command]
+pub fn reorder_accounts(vault: State<'_, SharedVault>, ids: Vec<String>) -> AppResult<()> {
+    with_vault(&vault, |v| v.reorder_accounts(&ids))
+}
+
+#[tauri::command]
 pub fn delete_group(vault: State<'_, SharedVault>, id: String) -> AppResult<()> {
     with_vault(&vault, |v| v.delete_group(&id))
 }

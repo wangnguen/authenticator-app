@@ -78,6 +78,26 @@ describe("TOTP (RFC 6238, phụ lục B)", () => {
     expect(entry.code).toBe("94287082");
     expect(entry.expiresAt).toBe(60_000);
   });
+
+  it("sắp theo vị trí đã kéo thả, chưa sắp thì theo tên", async () => {
+    const account = (id: string, issuer: string, order?: number) => ({
+      id,
+      issuer,
+      label: "",
+      secret: base32Encode(sha1),
+      algorithm: "SHA1" as const,
+      digits: 6,
+      period: 30,
+      createdAt: 0,
+      ...(order === undefined ? {} : { order }),
+    });
+    const names = async (accounts: ReturnType<typeof account>[]) =>
+      (await codesFor(accounts)).map((e) => e.issuer);
+    expect(await names([account("1", "Zeta"), account("2", "Alpha")])).toEqual(["Alpha", "Zeta"]);
+    expect(
+      await names([account("1", "Alpha", 2), account("2", "Mid", 1), account("3", "Zeta")]),
+    ).toEqual(["Zeta", "Mid", "Alpha"]);
+  });
 });
 
 describe("Base32 và secret", () => {

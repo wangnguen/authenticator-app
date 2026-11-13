@@ -25,6 +25,13 @@ export function useCodes(
     }
   }, [fetcher]);
 
+  /** Đổi thứ tự hiển thị ngay (trước khi lưu xong), id không có trong `ids` đứng sau. */
+  const reorder = useCallback((ids: string[]) => {
+    const position = new Map(ids.map((id, i) => [id, i]));
+    const at = (id: string) => position.get(id) ?? ids.length;
+    setEntries((prev) => [...prev].sort((a, b) => at(a.id) - at(b.id)));
+  }, []);
+
   useEffect(() => {
     if (!enabled) return;
     void refresh();
@@ -42,5 +49,5 @@ export function useCodes(
     return () => clearTimeout(timer);
   }, [enabled, entries, refresh]);
 
-  return { entries, error, loading, now, refresh };
+  return { entries, error, loading, now, refresh, reorder };
 }

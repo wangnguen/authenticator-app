@@ -1,6 +1,6 @@
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { errorMessage, type Group } from "@auth/core";
-import { Icon } from "@auth/ui";
+import { Icon, SortableList } from "@auth/ui";
 import { api } from "../api";
 
 interface Props {
@@ -9,7 +9,7 @@ interface Props {
   onChanged: () => void;
 }
 
-/** Quản lý group: tạo, đổi tên, ẩn/hiện, xoá (tài khoản trong group vẫn còn). */
+/** Quản lý group: tạo, đổi tên, ẩn/hiện, xoá (tài khoản trong group vẫn còn), kéo thả sắp xếp. */
 export function GroupsDialog({ onClose, onChanged }: Props) {
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [newName, setNewName] = useState("");
@@ -69,6 +69,16 @@ export function GroupsDialog({ onClose, onChanged }: Props) {
     if (await run(() => api.renameGroup(editing.id, editing.name))) setEditing(null);
   };
 
+  /** Đổi chỗ ngay trên giao diện rồi mới lưu; lỗi thì `run` báo lỗi và tải lại thứ tự cũ. */
+  const reorder = (ids: string[]) => {
+    setGroups((current) =>
+      current ? ids.map((id) => current.find((g) => g.id === id)).filter((g): g is Group => !!g) : current,
+    );
+    void run(() => api.reorderGroups(ids)).then((ok) => {
+      if (!ok) void load();
+    });
+  };
+
   const remove = (group: Group) => {
     if (confirmDelete !== group.id) {
       setConfirmDelete(group.id);
@@ -84,7 +94,8 @@ export function GroupsDialog({ onClose, onChanged }: Props) {
         <h2>Group</h2>
         <p className="auth-muted hint">
           Một tài khoản có thể thuộc nhiều group. Group <strong>ẩn</strong>: tài khoản chỉ thuộc
-          các group ẩn không hiện ở "Tất cả" (cả trong extension); tìm kiếm vẫn thấy.
+          các group ẩn không hiện ở "Tất cả" (cả trong extension); tìm kiếm vẫn thấy. Nhấn giữ
+          rồi kéo một dòng để đổi thứ tự trên thanh lọc.
         </p>
 
         <form className="group-new" onSubmit={create}>
@@ -106,9 +117,16 @@ export function GroupsDialog({ onClose, onChanged }: Props) {
         ) : groups.length === 0 ? (
           <p className="auth-empty">Chưa có group nào.</p>
         ) : (
-          <ul className="group-list">
-            {groups.map((group) => (
-              <li key={group.id} className="group-item">
+          <SortableList
+            items={groups}
+            getId={(g) => g.id}
+            getName={(g) => g.name}
+            onReorder={reorder}
+            className="group-list"
+            itemClassName="group-item"
+            isLocked={(g) => editing?.id === g.id}
+            renderItem={(group) => (
+              <>
                 {editing?.id === group.id ? (
                   <input
                     className="auth-input group-item__name"
@@ -152,9 +170,9 @@ export function GroupsDialog({ onClose, onChanged }: Props) {
                 >
                   {confirmDelete === group.id ? "Xác nhận?" : "Xoá"}
                 </button>
-              </li>
-            ))}
-          </ul>
+              </>
+            )}
+          />
         )}
 
         {error && <p className="auth-error">{error}</p>}

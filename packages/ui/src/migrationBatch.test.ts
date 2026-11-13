@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { migrationBatch, scanProgress } from "./migrationBatch";
+import { migrationBatch, missingBatchNote, scanProgress } from "./migrationBatch";
 
 /** Tạo link migration với một tài khoản giả và các trường lô. */
 function uri(size: number, index: number, id: number): string {
@@ -56,5 +56,19 @@ describe("scanProgress", () => {
       batches: [{ id: 7, scanned: 2, size: 3 }],
       plain: 1,
     });
+  });
+});
+
+describe("missingBatchNote", () => {
+  it("nhắc QR còn thiếu", () => {
+    expect(missingBatchNote([uri(2, 0, 5)])).toContain("QR 1/2");
+    expect(missingBatchNote([uri(2, 0, 5)])).toContain("thêm cả QR 2/2");
+    expect(missingBatchNote([uri(3, 1, 5)])).toContain("thêm cả QR 1/3, 3/3");
+  });
+
+  it("đủ QR, chỉ một QR, hoặc link thường thì không nhắc", () => {
+    expect(missingBatchNote([uri(2, 0, 5), uri(2, 1, 5)])).toBeNull();
+    expect(missingBatchNote([uri(1, 0, 5)])).toBeNull();
+    expect(missingBatchNote([GITHUB])).toBeNull();
   });
 });

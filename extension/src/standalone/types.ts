@@ -19,6 +19,8 @@ export interface Account {
   updatedAt?: number;
   /** Các group chứa tài khoản; không có = chưa thuộc group nào. */
   groupIds?: string[];
+  /** Vị trí trong danh sách (sắp xếp trong app desktop), nhỏ đứng trước; không có = 0. */
+  order?: number;
 }
 
 /** Group, giống `Group` trong vault.rs. Xoá group chỉ đánh dấu `deletedAt`. */
@@ -26,6 +28,8 @@ export interface StoredGroup {
   id: string;
   name: string;
   hidden: boolean;
+  /** Vị trí trên thanh lọc, nhỏ đứng trước (bản cũ không có = 0). */
+  order?: number;
   updatedAt: number;
   deletedAt?: number;
 }

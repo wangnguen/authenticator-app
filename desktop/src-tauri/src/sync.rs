@@ -275,6 +275,7 @@ mod tests {
             created_at: at,
             updated_at: at,
             group_ids: Vec::new(),
+            order: 0,
         }
     }
 
@@ -299,6 +300,7 @@ mod tests {
             id: id.into(),
             name: name.into(),
             hidden: false,
+            order: 0,
             updated_at: at,
             deleted_at: None,
         }

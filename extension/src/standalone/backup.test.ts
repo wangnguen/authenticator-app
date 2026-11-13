@@ -111,12 +111,13 @@ describe("bản sao lưu dùng chung với app desktop", () => {
           createdAt: 1,
           updatedAt: 3,
           groupIds: ["g1", "g2"],
+          order: 2,
         },
       ],
       deleted: [],
       groups: [
-        { id: "g1", name: "Công việc", hidden: true, updatedAt: 2 },
-        { id: "g2", name: "Cũ", hidden: false, updatedAt: 2, deletedAt: 4 },
+        { id: "g1", name: "Công việc", hidden: true, order: 1, updatedAt: 2 },
+        { id: "g2", name: "Cũ", hidden: false, order: 0, updatedAt: 2, deletedAt: 4 },
       ],
     };
     const kdf = generateKdf();

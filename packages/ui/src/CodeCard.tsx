@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { type ComponentProps, useState, type ReactNode } from "react";
 import { formatCode, secondsLeft, type CodeEntry } from "@auth/core";
 import { CountdownRing } from "./CountdownRing";
 
@@ -9,9 +9,13 @@ interface Props {
   actions?: ReactNode;
   /** Tên các group của tài khoản, hiện thành nhãn nhỏ. */
   tags?: string[];
+  /** Thuộc tính thêm cho thẻ `<li>` (kéo thả trong `CodeList`). */
+  itemProps?: ComponentProps<"li">;
+  /** Thẻ kéo được để đổi vị trí (chỉ để ghi gợi ý). */
+  draggable?: boolean;
 }
 
-export function CodeCard({ entry, now, actions, tags }: Props) {
+export function CodeCard({ entry, now, actions, tags, itemProps, draggable }: Props) {
   const [copied, setCopied] = useState(false);
   const remaining = secondsLeft(entry.expiresAt, now);
 
@@ -22,12 +26,12 @@ export function CodeCard({ entry, now, actions, tags }: Props) {
   };
 
   return (
-    <li className="auth-card">
+    <li {...itemProps} className={["auth-card", itemProps?.className].filter(Boolean).join(" ")}>
       <button
         type="button"
         className="auth-card__main"
         onClick={copy}
-        title="Bấm để copy"
+        title={draggable ? "Bấm để copy, giữ và kéo để đổi vị trí" : "Bấm để copy"}
       >
         <span className="auth-card__issuer">{entry.issuer || entry.label}</span>
         {entry.issuer && <span className="auth-card__label">{entry.label}</span>}

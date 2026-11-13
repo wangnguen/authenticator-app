@@ -48,6 +48,9 @@ export const api = {
   createGroup: (name: string) => invoke<Group>("create_group", { name }),
   renameGroup: (id: string, name: string) => invoke<Group>("rename_group", { id, name }),
   setGroupHidden: (id: string, hidden: boolean) => invoke<Group>("set_group_hidden", { id, hidden }),
+  /** Thứ tự mới của mọi group (kéo thả trên thanh lọc); trả về danh sách đã sắp. */
+  reorderGroups: (ids: string[]) => invoke<Group[]>("reorder_groups", { ids }),
+  reorderAccounts: (ids: string[]) => invoke<void>("reorder_accounts", { ids }),
   /** Xoá group; tài khoản trong group vẫn còn. */
   deleteGroup: (id: string) => invoke<void>("delete_group", { id }),
   /** Đặt lại toàn bộ group của một tài khoản. */

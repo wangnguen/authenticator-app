@@ -717,3 +717,10 @@ h3 {
   justify-content: space-between;
   border-bottom-color: var(--auth-danger);
 }
+
+/* Đã thêm một phần bản xuất Google Authenticator, nhắc thêm QR còn thiếu. */
+.partial-import {
+  padding: 8px 10px;
+  border: 1px solid var(--auth-accent);
+  border-radius: var(--auth-radius);
+}

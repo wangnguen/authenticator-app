@@ -96,8 +96,12 @@ export async function codesFor(accounts: Account[], now = Date.now()): Promise<C
       };
     }),
   );
+  // Như app desktop: theo vị trí đã sắp xếp, bằng nhau thì theo tên.
+  const orderOf = new Map(accounts.map((a) => [a.id, a.order ?? 0]));
   const key = (e: CodeEntry) => [e.issuer.toLowerCase(), e.label.toLowerCase()];
   return entries.sort((a, b) => {
+    const order = (orderOf.get(a.id) ?? 0) - (orderOf.get(b.id) ?? 0);
+    if (order !== 0) return order;
     const [ai, al] = key(a);
     const [bi, bl] = key(b);
     return ai < bi ? -1 : ai > bi ? 1 : al < bl ? -1 : al > bl ? 1 : 0;

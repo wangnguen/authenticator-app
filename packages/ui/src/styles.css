@@ -211,8 +211,54 @@ select.auth-input {
 /* Thanh lọc theo group. */
 .auth-groups {
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
+  min-width: 0;
+}
+
+.auth-groups > .auth-chip {
+  flex: none;
+}
+
+/* Các chip group: một hàng, nhiều thì cuộn ngang (lăn chuột / vuốt touchpad), thanh cuộn ẩn,
+   mép mờ đi khi còn chip khuất. */
+.auth-groups__scroll {
+  display: flex;
+  flex: 0 1 auto;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 3px;
+  margin: -5px -3px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+  --auth-fade-left: 0px;
+  --auth-fade-right: 0px;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 var(--auth-fade-left),
+    #000 calc(100% - var(--auth-fade-right)),
+    transparent 100%
+  );
+}
+
+.auth-groups__scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.auth-groups__scroll--left {
+  --auth-fade-left: 24px;
+}
+
+.auth-groups__scroll--right {
+  --auth-fade-right: 24px;
+}
+
+.auth-groups__scroll > .auth-chip {
+  flex: none;
+  white-space: nowrap;
 }
 
 .auth-chip {
@@ -265,4 +311,68 @@ select.auth-input {
   background: var(--auth-surface-2);
   color: var(--auth-muted);
   font-size: 11px;
+}
+
+/* Kéo thả chip group để đổi thứ tự. */
+.auth-chip--draggable {
+  cursor: grab;
+  touch-action: pan-x;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.auth-groups--dragging,
+.auth-groups--dragging .auth-chip--draggable {
+  cursor: grabbing;
+}
+
+/* Không cuộn mượt khi đang kéo, để tự cuộn tới mép theo kịp con trỏ. */
+.auth-groups--dragging .auth-groups__scroll {
+  scroll-behavior: auto;
+}
+
+/* Chip đang được kéo: nổi lên trên các chip khác. */
+.auth-chip--dragged {
+  position: relative;
+  z-index: 1;
+  border-color: var(--auth-accent);
+  background: var(--auth-surface-2);
+  color: var(--auth-text);
+  box-shadow:
+    0 0 0 1px var(--auth-accent),
+    0 2px 6px rgb(0 0 0 / 0.35);
+}
+
+/* Danh sách kéo thả (SortableList): nhấn giữ cả dòng để kéo, dòng đang kéo nổi lên. */
+.auth-sortable--grab {
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.auth-sortable--dragging {
+  position: relative;
+  z-index: 1;
+  cursor: grabbing;
+  box-shadow:
+    0 0 0 1px var(--auth-accent),
+    0 6px 16px rgb(0 0 0 / 0.4);
+}
+
+/* Thẻ tài khoản kéo thả được (CodeList): thẻ đang kéo nổi lên trên các thẻ khác. */
+.auth-card--sortable {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.auth-card--dragging {
+  position: relative;
+  z-index: 2;
+  border-color: var(--auth-accent);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+}
+
+.auth-card--dragging,
+.auth-card--dragging .auth-card__main {
+  cursor: grabbing;
 }

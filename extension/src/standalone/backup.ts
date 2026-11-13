@@ -106,13 +106,15 @@ function toVaultData(value: unknown): VaultData {
     typeof a.createdAt === "number" &&
     ["SHA1", "SHA256", "SHA512"].includes(a.algorithm as string) &&
     (a.groupIds === undefined ||
-      (Array.isArray(a.groupIds) && a.groupIds.every((id) => typeof id === "string")));
+      (Array.isArray(a.groupIds) && a.groupIds.every((id) => typeof id === "string"))) &&
+    (a.order === undefined || typeof a.order === "number");
   const isGroup = (g: unknown): g is StoredGroup =>
     isRecord(g) &&
     typeof g.id === "string" &&
     typeof g.name === "string" &&
     typeof g.updatedAt === "number" &&
     (g.hidden === undefined || typeof g.hidden === "boolean") &&
+    (g.order === undefined || typeof g.order === "number") &&
     (g.deletedAt === undefined || g.deletedAt === null || typeof g.deletedAt === "number");
   const isDeleted = (d: unknown): d is Deleted =>
     isRecord(d) &&
@@ -140,6 +142,7 @@ function toVaultData(value: unknown): VaultData {
       id: g.id,
       name: g.name,
       hidden: g.hidden ?? false,
+      order: g.order ?? 0,
       updatedAt: g.updatedAt,
       ...(typeof g.deletedAt === "number" ? { deletedAt: g.deletedAt } : {}),
     })),
@@ -209,6 +212,7 @@ function serializeData(data: VaultData): string {
     createdAt: a.createdAt,
     updatedAt: a.updatedAt ?? 0,
     ...(a.groupIds?.length ? { groupIds: a.groupIds } : {}),
+    ...(a.order ? { order: a.order } : {}),
   });
   return JSON.stringify({
     accounts: data.accounts.map(account),
@@ -221,6 +225,7 @@ function serializeData(data: VaultData): string {
       id: g.id,
       name: g.name,
       hidden: g.hidden,
+      order: g.order ?? 0,
       updatedAt: g.updatedAt,
       ...(g.deletedAt !== undefined ? { deletedAt: g.deletedAt } : {}),
     })),

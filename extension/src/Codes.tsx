@@ -7,10 +7,18 @@ import {
   type Group,
   type ImportResult,
 } from "@auth/core";
-import { CodeList, GroupBar, Icon, SearchBox, useCodes } from "@auth/ui";
+import { CodeList, GroupBar, Icon, missingBatchNote, SearchBox, useCodes } from "@auth/ui";
 import { fillCode, scanQrOnPage } from "./page";
 
 type Notice = { kind: "success" | "error"; text: string } | null;
+
+/** Filter group đang chọn, nhớ qua các lần mở popup. */
+const FILTER_KEY = "groupFilter";
+
+interface SavedFilter {
+  selected: string | null;
+  showHidden: boolean;
+}
 
 interface Props {
   /** Phải là hàm cố định (không tạo mới mỗi lần render), vì `useCodes` gọi lại khi nó đổi. */
@@ -30,13 +38,31 @@ export function Codes({ list, listGroups, add, emptyText, reloadKey = 0 }: Props
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState<Notice>(null);
   const [scanning, setScanning] = useState(false);
-  const [groups, setGroups] = useState<Group[]>([]);
+  /** null: chưa tải xong. */
+  const [groups, setGroups] = useState<Group[] | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
+  /** Đã đọc filter đã lưu (trước đó không ghi đè, không kiểm tra). */
+  const [filterLoaded, setFilterLoaded] = useState(false);
+
+  useEffect(() => {
+    void chrome.storage.local.get(FILTER_KEY).then((stored) => {
+      const saved = stored[FILTER_KEY] as Partial<SavedFilter> | undefined;
+      setSelectedGroup(typeof saved?.selected === "string" ? saved.selected : null);
+      setShowHidden(saved?.showHidden === true);
+      setFilterLoaded(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!filterLoaded) return;
+    const value: SavedFilter = { selected: selectedGroup, showHidden };
+    void chrome.storage.local.set({ [FILTER_KEY]: value });
+  }, [filterLoaded, selectedGroup, showHidden]);
 
   // Lỗi (ví dụ app desktop bản cũ chưa có group) thì coi như không có group.
   const refreshGroups = useCallback(
-    () => listGroups().then(setGroups, () => setGroups([])),
+    () => listGroups().then(setGroups, () => setGroups((current) => current ?? [])),
     [listGroups],
   );
 
@@ -49,13 +75,17 @@ export function Codes({ list, listGroups, add, emptyText, reloadKey = 0 }: Props
   }, [reloadKey, refresh, refreshGroups]);
 
   useEffect(() => {
+    // Chờ tải xong group và filter đã lưu, không thì filter bị xoá ngay lúc mở popup.
+    if (!groups || !filterLoaded) return;
     const group = groups.find((g) => g.id === selectedGroup);
     if (selectedGroup && (!group || (group.hidden && !showHidden))) setSelectedGroup(null);
-  }, [groups, selectedGroup, showHidden]);
+  }, [groups, filterLoaded, selectedGroup, showHidden]);
+
+  const groupList = groups ?? [];
 
   const visible = useMemo(
-    () => filterEntries(entries, groups, { selected: selectedGroup, showHidden, query }),
-    [entries, groups, selectedGroup, showHidden, query],
+    () => filterEntries(entries, groupList, { selected: selectedGroup, showHidden, query }),
+    [entries, groupList, selectedGroup, showHidden, query],
   );
 
   const fill = async (code: string) => {
@@ -77,7 +107,11 @@ export function Codes({ list, listGroups, add, emptyText, reloadKey = 0 }: Props
         return;
       }
       const result = await add(uris.join("\n"));
-      setNotice({ kind: "success", text: describeImport(result) });
+      const missing = missingBatchNote(uris);
+      setNotice({
+        kind: "success",
+        text: describeImport(result) + (missing ? ` Lưu ý: ${missing}.` : ""),
+      });
       await refresh();
     } catch (e) {
       setNotice({ kind: "error", text: errorMessage(e) });
@@ -101,7 +135,7 @@ export function Codes({ list, listGroups, add, emptyText, reloadKey = 0 }: Props
         </button>
       </div>
       <GroupBar
-        groups={groups}
+        groups={groupList}
         selected={selectedGroup}
         onSelect={setSelectedGroup}
         showHidden={showHidden}
@@ -117,7 +151,7 @@ export function Codes({ list, listGroups, add, emptyText, reloadKey = 0 }: Props
             entries={visible}
             now={now}
             query={query}
-            groups={groups}
+            groups={groupList}
             emptyText={
               selectedGroup
                 ? "Group này chưa có tài khoản."
