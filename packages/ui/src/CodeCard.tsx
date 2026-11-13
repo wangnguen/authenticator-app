@@ -7,9 +7,11 @@ interface Props {
   now: number;
   /** Nút phụ bên phải (ví dụ: xoá, điền vào trang). */
   actions?: ReactNode;
+  /** Tên các group của tài khoản, hiện thành nhãn nhỏ. */
+  tags?: string[];
 }
 
-export function CodeCard({ entry, now, actions }: Props) {
+export function CodeCard({ entry, now, actions, tags }: Props) {
   const [copied, setCopied] = useState(false);
   const remaining = secondsLeft(entry.expiresAt, now);
 
@@ -29,6 +31,15 @@ export function CodeCard({ entry, now, actions }: Props) {
       >
         <span className="auth-card__issuer">{entry.issuer || entry.label}</span>
         {entry.issuer && <span className="auth-card__label">{entry.label}</span>}
+        {tags && tags.length > 0 && (
+          <span className="auth-card__tags">
+            {tags.map((tag) => (
+              <span key={tag} className="auth-tag">
+                {tag}
+              </span>
+            ))}
+          </span>
+        )}
         <span className="auth-card__code">
           {copied ? "Đã copy" : formatCode(entry.code)}
         </span>

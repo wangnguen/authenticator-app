@@ -1,4 +1,4 @@
-import type { AccountSummary, CodeEntry, ImportResult, PendingDeletion } from "@auth/core";
+import type { AccountSummary, CodeEntry, Group, ImportResult, PendingDeletion } from "@auth/core";
 import {
   deriveKey,
   fromBase64,
@@ -16,7 +16,7 @@ import {
 import { fetchBackup, uploadBackup } from "./google";
 import { computeMerge, type Merge, pendingDeletions, resolveMerge, type SyncSummary } from "./merge";
 import { buildAccount, codesFor, parseUris } from "./otp";
-import { type VaultData, VaultError } from "./types";
+import { emptyData, type VaultData, VaultError } from "./types";
 
 /**
  * Vault riêng của extension (dùng khi không có app desktop), là bản sao của bản sao lưu trên
@@ -159,7 +159,28 @@ export async function forget(): Promise<void> {
 }
 
 export async function listCodes(): Promise<CodeEntry[]> {
-  return codesFor((await requireOpen()).data.accounts);
+  const { data } = await requireOpen();
+  const active = new Set(data.groups.filter((g) => g.deletedAt === undefined).map((g) => g.id));
+  const codes = await codesFor(data.accounts);
+  const groupsOf = new Map(data.accounts.map((a) => [a.id, a.groupIds ?? []]));
+  return codes.map((entry) => ({
+    ...entry,
+    groupIds: (groupsOf.get(entry.id) ?? []).filter((id) => active.has(id)),
+  }));
+}
+
+/** Group (chưa xoá) sắp theo tên. Thêm/sửa group làm trong app desktop. */
+export async function listGroups(): Promise<Group[]> {
+  const { data } = await requireOpen();
+  return data.groups
+    .filter((g) => g.deletedAt === undefined)
+    .map((g) => ({
+      id: g.id,
+      name: g.name,
+      hidden: g.hidden,
+      count: data.accounts.filter((a) => a.groupIds?.includes(g.id)).length,
+    }))
+    .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 }
 
 /** Thêm tài khoản từ link (QR quét trên trang), bỏ qua tài khoản trùng secret. */
@@ -266,7 +287,7 @@ export async function prepareSync(password?: string): Promise<PreparedSync | Fir
   }
   if (!vault) {
     // Lần đầu: nhận nguyên dữ liệu trên Drive.
-    const merge = computeMerge({ accounts: [], deleted: [] }, remoteData);
+    const merge = computeMerge(emptyData(), remoteData);
     return {
       plan: plan(merge, remote.modifiedTime, 0),
       merge,
@@ -295,7 +316,7 @@ function prepared(
   protection: Protection,
 ): PreparedSync {
   // Drive chưa có bản nào: gộp với dữ liệu rỗng = đưa toàn bộ lên.
-  const merge = computeMerge(vault.data, remote ?? { accounts: [], deleted: [] });
+  const merge = computeMerge(vault.data, remote ?? emptyData());
   return {
     plan: plan(merge, backupVersion, vault.stored.revision),
     merge,
@@ -341,7 +362,7 @@ export async function createVault(password: string): Promise<void> {
   }
   const kdf = generateKdf();
   const protection: Protection = { kind: "password", kdf, key: await deriveKey(password, kdf) };
-  const data: VaultData = { accounts: [], deleted: [] };
+  const data: VaultData = emptyData();
   await navigator.locks.request(SYNC_LOCK, async () => {
     if (await readStored()) throw new VaultError("VAULT_EXISTS", "Extension đã có vault.");
     const remote = await fetchBackup();

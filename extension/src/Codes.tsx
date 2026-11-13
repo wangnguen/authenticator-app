@@ -1,6 +1,13 @@
-import { useEffect, useState } from "react";
-import { type CodeEntry, describeImport, errorMessage, type ImportResult } from "@auth/core";
-import { CodeList, Icon, SearchBox, useCodes } from "@auth/ui";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type CodeEntry,
+  describeImport,
+  errorMessage,
+  filterEntries,
+  type Group,
+  type ImportResult,
+} from "@auth/core";
+import { CodeList, GroupBar, Icon, SearchBox, useCodes } from "@auth/ui";
 import { fillCode, scanQrOnPage } from "./page";
 
 type Notice = { kind: "success" | "error"; text: string } | null;
@@ -8,6 +15,8 @@ type Notice = { kind: "success" | "error"; text: string } | null;
 interface Props {
   /** Phải là hàm cố định (không tạo mới mỗi lần render), vì `useCodes` gọi lại khi nó đổi. */
   list: () => Promise<CodeEntry[]>;
+  /** Group để lọc (quản lý group trong app desktop). Cũng phải là hàm cố định. */
+  listGroups: () => Promise<Group[]>;
   /** Thêm tài khoản từ các link otpauth đọc được trên trang. */
   add: (uris: string) => Promise<ImportResult>;
   emptyText: string;
@@ -16,15 +25,38 @@ interface Props {
 }
 
 /** Danh sách mã: tìm kiếm, điền mã vào trang, quét QR trên trang để thêm tài khoản. */
-export function Codes({ list, add, emptyText, reloadKey = 0 }: Props) {
+export function Codes({ list, listGroups, add, emptyText, reloadKey = 0 }: Props) {
   const { entries, error, loading, now, refresh } = useCodes(list);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState<Notice>(null);
   const [scanning, setScanning] = useState(false);
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
+
+  // Lỗi (ví dụ app desktop bản cũ chưa có group) thì coi như không có group.
+  const refreshGroups = useCallback(
+    () => listGroups().then(setGroups, () => setGroups([])),
+    [listGroups],
+  );
 
   useEffect(() => {
-    if (reloadKey > 0) void refresh();
-  }, [reloadKey, refresh]);
+    void refreshGroups();
+  }, [refreshGroups]);
+
+  useEffect(() => {
+    if (reloadKey > 0) void Promise.all([refresh(), refreshGroups()]);
+  }, [reloadKey, refresh, refreshGroups]);
+
+  useEffect(() => {
+    const group = groups.find((g) => g.id === selectedGroup);
+    if (selectedGroup && (!group || (group.hidden && !showHidden))) setSelectedGroup(null);
+  }, [groups, selectedGroup, showHidden]);
+
+  const visible = useMemo(
+    () => filterEntries(entries, groups, { selected: selectedGroup, showHidden, query }),
+    [entries, groups, selectedGroup, showHidden, query],
+  );
 
   const fill = async (code: string) => {
     try {
@@ -68,6 +100,13 @@ export function Codes({ list, add, emptyText, reloadKey = 0 }: Props) {
           )}
         </button>
       </div>
+      <GroupBar
+        groups={groups}
+        selected={selectedGroup}
+        onSelect={setSelectedGroup}
+        showHidden={showHidden}
+        onToggleHidden={() => setShowHidden((v) => !v)}
+      />
       {notice && (
         <p className={notice.kind === "success" ? "auth-success" : "auth-error"}>{notice.text}</p>
       )}
@@ -75,10 +114,17 @@ export function Codes({ list, add, emptyText, reloadKey = 0 }: Props) {
       {!loading && (
         <div className="popup__list">
           <CodeList
-            entries={entries}
+            entries={visible}
             now={now}
             query={query}
-            emptyText={emptyText}
+            groups={groups}
+            emptyText={
+              selectedGroup
+                ? "Group này chưa có tài khoản."
+                : entries.length > 0
+                  ? "Mọi tài khoản đều thuộc group đang ẩn."
+                  : emptyText
+            }
             renderActions={(entry) => (
               <button
                 className="auth-btn auth-btn--small"

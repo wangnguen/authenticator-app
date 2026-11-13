@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { computeMerge, pendingDeletions, resolveMerge } from "./merge";
-import { type Account, changedAt, type Deleted, type VaultData } from "./types";
+import { type Account, changedAt, type Deleted, type StoredGroup, type VaultData } from "./types";
 
 // Cùng các tình huống với test trong desktop/src-tauri/src/sync.rs.
 
@@ -19,7 +19,11 @@ function account(id: string, secret: string, at: number): Account {
 }
 
 const tomb = (a: Account, at: number): Deleted => ({ id: a.id, deletedAt: at, account: a });
-const data = (accounts: Account[], deleted: Deleted[] = []): VaultData => ({ accounts, deleted });
+const data = (accounts: Account[], deleted: Deleted[] = [], groups: StoredGroup[] = []): VaultData => ({
+  accounts,
+  deleted,
+  groups,
+});
 const ids = (d: VaultData) => d.accounts.map((a) => a.id);
 
 describe("gộp với bản sao lưu", () => {
@@ -94,5 +98,44 @@ describe("gộp với bản sao lưu", () => {
   it("vault cũ không có updatedAt dùng createdAt", () => {
     const old = { ...account("a", "AAAA", 7), updatedAt: undefined };
     expect(changedAt(old)).toBe(7);
+  });
+
+  it("group lấy bản thay đổi sau cùng, bằng nhau thì bản đã xoá thắng", () => {
+    const group = (id: string, name: string, at: number): StoredGroup => ({
+      id,
+      name,
+      hidden: false,
+      updatedAt: at,
+    });
+    const local = data([], [], [group("g1", "Work", 1), group("g2", "Cá nhân", 1)]);
+    const remote = data(
+      [],
+      [],
+      [
+        { ...group("g1", "Công việc", 5), hidden: true },
+        { ...group("g2", "Cá nhân", 1), deletedAt: 1 },
+        group("g3", "Mới", 2),
+      ],
+    );
+    const { data: result } = resolveMerge(computeMerge(local, remote), [], 10);
+    expect(result.groups.map((g) => [g.id, g.name, g.hidden, g.deletedAt === undefined])).toEqual([
+      ["g1", "Công việc", true, true],
+      ["g2", "Cá nhân", false, false],
+      ["g3", "Mới", false, true],
+    ]);
+  });
+
+  it("tài khoản trùng secret giữ group của cả hai bản", () => {
+    const a = { ...account("a", "SAME", 1), groupIds: ["g1"] };
+    const b = { ...account("b", "SAME", 1), groupIds: ["g2", "g1"] };
+    const { data: result } = resolveMerge(computeMerge(data([b]), data([a])), [], 10);
+    expect(ids(result)).toEqual(["a"]);
+    expect(result.accounts[0].groupIds).toEqual(["g1", "g2"]);
+  });
+
+  it("group của tài khoản theo bản thay đổi sau cùng", () => {
+    const moved = { ...account("a", "AAAA", 5), groupIds: ["g1"] };
+    const { data: result } = resolveMerge(computeMerge(data([account("a", "AAAA", 1)]), data([moved])), [], 10);
+    expect(result.accounts[0].groupIds).toEqual(["g1"]);
   });
 });

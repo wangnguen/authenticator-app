@@ -10,6 +10,18 @@ export interface CodeEntry {
   period: number;
   /** Thời điểm mã hết hạn (Unix ms). */
   expiresAt: number;
+  /** Các group chứa tài khoản (một tài khoản có thể ở nhiều group). App cũ không gửi. */
+  groupIds?: string[];
+}
+
+/** Group để lọc danh sách mã. */
+export interface Group {
+  id: string;
+  name: string;
+  /** Ẩn: tài khoản chỉ thuộc các group ẩn không hiện ở "Tất cả". */
+  hidden: boolean;
+  /** Số tài khoản trong group. */
+  count: number;
 }
 
 export interface NewAccount {

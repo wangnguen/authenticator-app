@@ -1,5 +1,5 @@
 import { argon2id } from "hash-wasm";
-import { type Account, type Deleted, type VaultData, VaultError } from "./types";
+import { type Account, type Deleted, type StoredGroup, type VaultData, VaultError } from "./types";
 
 /**
  * Định dạng bản sao lưu trên Drive, giống hệt vault.rs của app desktop:
@@ -9,9 +9,11 @@ import { type Account, type Deleted, type VaultData, VaultError } from "./types"
  */
 
 const AAD = new TextEncoder().encode("authenticator-vault-v1");
-const FILE_VERSION = 2;
+/** v3: thêm group (xem FILE_VERSION trong vault.rs). */
+const FILE_VERSION = 3;
 const MIN_FILE_VERSION = 1;
 const PLAIN_FORMAT = "authenticator-plain-backup";
+const PLAIN_VERSION = 2;
 export const MIN_PASSWORD_LEN = 8;
 
 export interface KdfParams {
@@ -84,6 +86,8 @@ function aesKey(key: Uint8Array): Promise<CryptoKey> {
 
 const invalidBackup = (message = "Bản sao lưu không hợp lệ.") =>
   new VaultError("INVALID_BACKUP", message);
+const newerBackup = () =>
+  invalidBackup("Bản sao lưu được tạo bởi phiên bản app mới hơn. Hãy cập nhật extension.");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -100,7 +104,16 @@ function toVaultData(value: unknown): VaultData {
     typeof a.digits === "number" &&
     typeof a.period === "number" &&
     typeof a.createdAt === "number" &&
-    ["SHA1", "SHA256", "SHA512"].includes(a.algorithm as string);
+    ["SHA1", "SHA256", "SHA512"].includes(a.algorithm as string) &&
+    (a.groupIds === undefined ||
+      (Array.isArray(a.groupIds) && a.groupIds.every((id) => typeof id === "string")));
+  const isGroup = (g: unknown): g is StoredGroup =>
+    isRecord(g) &&
+    typeof g.id === "string" &&
+    typeof g.name === "string" &&
+    typeof g.updatedAt === "number" &&
+    (g.hidden === undefined || typeof g.hidden === "boolean") &&
+    (g.deletedAt === undefined || g.deletedAt === null || typeof g.deletedAt === "number");
   const isDeleted = (d: unknown): d is Deleted =>
     isRecord(d) &&
     typeof d.id === "string" &&
@@ -110,12 +123,26 @@ function toVaultData(value: unknown): VaultData {
   const raw = Array.isArray(value) ? { accounts: value, deleted: [] } : value;
   if (!isRecord(raw) || !Array.isArray(raw.accounts)) throw invalidBackup();
   const deleted = raw.deleted ?? [];
-  if (!Array.isArray(deleted) || !raw.accounts.every(isAccount) || !deleted.every(isDeleted)) {
+  const groups = raw.groups ?? [];
+  if (
+    !Array.isArray(deleted) ||
+    !Array.isArray(groups) ||
+    !raw.accounts.every(isAccount) ||
+    !deleted.every(isDeleted) ||
+    !groups.every(isGroup)
+  ) {
     throw invalidBackup();
   }
   return {
     accounts: raw.accounts,
     deleted: deleted.map((d) => (d.account ? d : { id: d.id, deletedAt: d.deletedAt })),
+    groups: groups.map((g) => ({
+      id: g.id,
+      name: g.name,
+      hidden: g.hidden ?? false,
+      updatedAt: g.updatedAt,
+      ...(typeof g.deletedAt === "number" ? { deletedAt: g.deletedAt } : {}),
+    })),
   };
 }
 
@@ -127,7 +154,10 @@ export function parseBackup(text: string): Backup {
     throw invalidBackup();
   }
   if (!isRecord(value)) throw invalidBackup();
-  if (value.format === PLAIN_FORMAT) return { kind: "plain", data: toVaultData(value) };
+  if (value.format === PLAIN_FORMAT) {
+    if (typeof value.version === "number" && value.version > PLAIN_VERSION) throw newerBackup();
+    return { kind: "plain", data: toVaultData(value) };
+  }
 
   const { version, kdf, nonce, ciphertext } = value;
   if (
@@ -142,11 +172,7 @@ export function parseBackup(text: string): Backup {
   ) {
     throw invalidBackup();
   }
-  if (version < MIN_FILE_VERSION || version > FILE_VERSION) {
-    throw invalidBackup(
-      "Bản sao lưu được tạo bởi phiên bản app mới hơn. Hãy cập nhật extension.",
-    );
-  }
+  if (version < MIN_FILE_VERSION || version > FILE_VERSION) throw newerBackup();
   return {
     kind: "encrypted",
     file: { version, nonce, ciphertext, kdf: kdf as unknown as KdfParams },
@@ -182,6 +208,7 @@ function serializeData(data: VaultData): string {
     period: a.period,
     createdAt: a.createdAt,
     updatedAt: a.updatedAt ?? 0,
+    ...(a.groupIds?.length ? { groupIds: a.groupIds } : {}),
   });
   return JSON.stringify({
     accounts: data.accounts.map(account),
@@ -190,6 +217,13 @@ function serializeData(data: VaultData): string {
         ? { id: d.id, deletedAt: d.deletedAt, account: account(d.account) }
         : { id: d.id, deletedAt: d.deletedAt },
     ),
+    groups: data.groups.map((g) => ({
+      id: g.id,
+      name: g.name,
+      hidden: g.hidden,
+      updatedAt: g.updatedAt,
+      ...(g.deletedAt !== undefined ? { deletedAt: g.deletedAt } : {}),
+    })),
   });
 }
 
@@ -215,7 +249,7 @@ export async function sealFile(
 
 export function plainFile(data: VaultData): string {
   const parsed = JSON.parse(serializeData(data)) as object;
-  return JSON.stringify({ format: PLAIN_FORMAT, version: 1, ...parsed }, null, 2);
+  return JSON.stringify({ format: PLAIN_FORMAT, version: PLAIN_VERSION, ...parsed }, null, 2);
 }
 
 /** So sánh hai bộ dữ liệu, bỏ qua thứ tự (để biết có cần tải lên Drive không). */
@@ -223,6 +257,7 @@ export function sameData(a: VaultData, b: VaultData): boolean {
   const sorted = (data: VaultData): VaultData => ({
     accounts: [...data.accounts].sort((x, y) => compareId(x.id, y.id)),
     deleted: [...data.deleted].sort((x, y) => compareId(x.id, y.id)),
+    groups: [...data.groups].sort((x, y) => compareId(x.id, y.id)),
   });
   return serializeData(sorted(a)) === serializeData(sorted(b));
 }

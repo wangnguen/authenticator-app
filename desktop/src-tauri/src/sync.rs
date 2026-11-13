@@ -11,11 +11,14 @@
 //! - cả hai bên đều đã xoá → giữ bản ghi xoá.
 //!
 //! Cuối cùng các tài khoản trùng secret (cùng một tài khoản thêm riêng trên hai máy) được gộp làm
-//! một, giữ bản có `id` nhỏ nhất để mọi máy chọn giống nhau.
+//! một, giữ bản có `id` nhỏ nhất để mọi máy chọn giống nhau (group của hai bản được gộp lại).
+//!
+//! Group gộp theo `id`, lấy bản thay đổi sau cùng (đổi tên, ẩn/hiện, xoá). Xoá group không cần
+//! xác nhận vì không làm mất tài khoản nào.
 
-use crate::vault::{Account, AccountSummary, Deleted, VaultData};
+use crate::vault::{Account, AccountSummary, Deleted, Group, VaultData};
 use serde::Serialize;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Bên sẽ mất tài khoản nếu đồng ý xoá.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -63,6 +66,7 @@ struct Pending {
 pub struct Merge {
     accounts: Vec<Account>,
     deleted: Vec<Deleted>,
+    groups: Vec<Group>,
     pending: Vec<Pending>,
     /// Tài khoản lấy từ bản sao lưu, chưa có trên máy này.
     pub added: Vec<AccountSummary>,
@@ -121,6 +125,7 @@ impl Merge {
         Self {
             accounts,
             deleted,
+            groups: merge_groups(&local.groups, &remote.groups),
             pending,
             added,
             uploaded,
@@ -149,7 +154,7 @@ impl Merge {
             uploaded: self.uploaded.len(),
             ..SyncSummary::default()
         };
-        let (mut accounts, mut deleted) = (self.accounts, self.deleted);
+        let (mut accounts, mut deleted, groups) = (self.accounts, self.deleted, self.groups);
         for Pending {
             mut account,
             deleted: mut tomb,
@@ -171,7 +176,14 @@ impl Merge {
         }
         dedup(&mut accounts);
         deleted.sort_by(|a, b| a.id.cmp(&b.id));
-        (VaultData { accounts, deleted }, summary)
+        (
+            VaultData {
+                accounts,
+                deleted,
+                groups,
+            },
+            summary,
+        )
     }
 }
 
@@ -194,11 +206,45 @@ fn merge_deleted(a: Option<&Deleted>, b: Option<&Deleted>) -> Option<Deleted> {
     }
 }
 
-/// Gộp tài khoản trùng secret, giữ bản có id nhỏ nhất. Kết quả sắp theo id.
+/// Gộp tài khoản trùng secret, giữ bản có id nhỏ nhất (cộng thêm group của các bản bị bỏ).
+/// Kết quả sắp theo id.
 fn dedup(accounts: &mut Vec<Account>) {
     accounts.sort_by(|a, b| a.id.cmp(&b.id));
-    let mut seen = HashSet::new();
-    accounts.retain(|a| seen.insert(a.secret.clone()));
+    let mut kept: Vec<Account> = Vec::with_capacity(accounts.len());
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for account in accounts.drain(..) {
+        match index.get(&account.secret) {
+            Some(&i) => {
+                let groups = &mut kept[i].group_ids;
+                groups.extend(account.group_ids);
+                groups.sort();
+                groups.dedup();
+            }
+            None => {
+                index.insert(account.secret.clone(), kept.len());
+                kept.push(account);
+            }
+        }
+    }
+    *accounts = kept;
+}
+
+/// Mỗi group lấy bản thay đổi sau cùng; bằng nhau thì bản đã xoá thắng. Sắp theo id.
+fn merge_groups(local: &[Group], remote: &[Group]) -> Vec<Group> {
+    let mut merged: BTreeMap<&str, &Group> = BTreeMap::new();
+    for group in local.iter().chain(remote) {
+        let newer = match merged.get(group.id.as_str()) {
+            Some(current) => {
+                (group.changed_at(), group.deleted_at.is_some())
+                    > (current.changed_at(), current.deleted_at.is_some())
+            }
+            None => true,
+        };
+        if newer {
+            merged.insert(&group.id, group);
+        }
+    }
+    merged.into_values().cloned().collect()
 }
 
 /// Tài khoản trong `merged` mà `base` chưa có (khác id và khác secret).
@@ -228,6 +274,7 @@ mod tests {
             period: 30,
             created_at: at,
             updated_at: at,
+            group_ids: Vec::new(),
         }
     }
 
@@ -240,7 +287,21 @@ mod tests {
     }
 
     fn data(accounts: Vec<Account>, deleted: Vec<Deleted>) -> VaultData {
-        VaultData { accounts, deleted }
+        VaultData {
+            accounts,
+            deleted,
+            groups: Vec::new(),
+        }
+    }
+
+    fn group(id: &str, name: &str, at: u64) -> Group {
+        Group {
+            id: id.into(),
+            name: name.into(),
+            hidden: false,
+            updated_at: at,
+            deleted_at: None,
+        }
     }
 
     fn ids(data: &VaultData) -> Vec<&str> {
@@ -332,5 +393,55 @@ mod tests {
         let remote = data(vec![], vec![purged]);
         let (result, _) = Merge::compute(&local, &remote).resolve(&[], 10);
         assert!(result.deleted[0].account.is_none());
+    }
+
+    #[test]
+    fn groups_take_latest_change_and_deletion_wins_ties() {
+        let mut local = data(vec![], vec![]);
+        let mut remote = data(vec![], vec![]);
+        let mut renamed = group("g1", "Công việc", 5);
+        renamed.hidden = true;
+        local.groups = vec![group("g1", "Work", 1), group("g2", "Cá nhân", 1)];
+        let mut deleted = group("g2", "Cá nhân", 1);
+        deleted.deleted_at = Some(1);
+        remote.groups = vec![renamed, deleted, group("g3", "Mới", 2)];
+
+        let (result, _) = Merge::compute(&local, &remote).resolve(&[], 10);
+        let names: Vec<(&str, &str, bool, bool)> = result
+            .groups
+            .iter()
+            .map(|g| (g.id.as_str(), g.name.as_str(), g.hidden, g.active()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("g1", "Công việc", true, true),
+                ("g2", "Cá nhân", false, false),
+                ("g3", "Mới", false, true)
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicate_accounts_keep_groups_of_both() {
+        let mut a = account("a", "SAME", 1);
+        a.group_ids = vec!["g1".into()];
+        let mut b = account("b", "SAME", 1);
+        b.group_ids = vec!["g2".into(), "g1".into()];
+        let (result, _) = Merge::compute(&data(vec![b], vec![]), &data(vec![a], vec![])).resolve(&[], 10);
+        assert_eq!(ids(&result), ["a"]);
+        assert_eq!(result.accounts[0].group_ids, ["g1", "g2"]);
+    }
+
+    #[test]
+    fn group_membership_follows_latest_account_change() {
+        let mut moved = account("a", "AAAA", 5);
+        moved.group_ids = vec!["g1".into()];
+        let (result, _) = Merge::compute(
+            &data(vec![account("a", "AAAA", 1)], vec![]),
+            &data(vec![moved], vec![]),
+        )
+        .resolve(&[], 10);
+        assert_eq!(result.accounts[0].group_ids, ["g1"]);
     }
 }

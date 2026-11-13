@@ -18,6 +18,8 @@ export type IconName =
   | "check"
   | "cloud-upload"
   | "download"
+  | "eye"
+  | "eye-off"
   | "folder-open"
   | "lock"
   | "lock-open"
@@ -26,6 +28,7 @@ export type IconName =
   | "settings"
   | "shield-lock"
   | "sync"
+  | "tag"
   | "trash";
 
 interface Props {

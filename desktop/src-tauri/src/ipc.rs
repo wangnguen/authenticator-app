@@ -31,6 +31,7 @@ enum Command {
     },
     Status,
     ListCodes,
+    ListGroups,
     AddUri { uri: String },
 }
 
@@ -97,6 +98,7 @@ fn execute(command: Command, token: Option<&str>, ctx: &Context) -> AppResult<Va
     match command {
         Command::Status => Ok(serde_json::to_value(vault.status())?),
         Command::ListCodes => Ok(serde_json::to_value(vault.codes()?)?),
+        Command::ListGroups => Ok(serde_json::to_value(vault.groups()?)?),
         Command::AddUri { uri } => {
             let result = vault.import_uri(&uri)?;
             drop(vault);

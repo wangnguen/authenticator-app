@@ -17,6 +17,14 @@ import type { VaultData } from "./types";
  * trong vault.rs cho chiều ngược lại.
  */
 const RUST_BACKUP = readFileSync(new URL("./fixtures/rust-backup.json", import.meta.url), "utf8");
+/**
+ * Bản v3 có group do app desktop tạo: GitHub thuộc group "Công việc" (đang ẩn) và group "Cũ"
+ * (đã xoá). Chiều ngược lại: test `opens_backup_with_groups_sealed_by_extension` trong vault.rs.
+ */
+const RUST_BACKUP_GROUPS = readFileSync(
+  new URL("./fixtures/rust-backup-groups.json", import.meta.url),
+  "utf8",
+);
 
 describe("bản sao lưu dùng chung với app desktop", () => {
   it("giải mã bản sao lưu do app desktop tạo", async () => {
@@ -70,9 +78,10 @@ describe("bản sao lưu dùng chung với app desktop", () => {
         },
       ],
       deleted: [{ id: "b", deletedAt: 2 }],
+      groups: [],
     };
     const text = plainFile(data);
-    expect(JSON.parse(text)).toMatchObject({ format: "authenticator-plain-backup", version: 1 });
+    expect(JSON.parse(text)).toMatchObject({ format: "authenticator-plain-backup", version: 2 });
     const backup = parseBackup(text);
     expect(backup.kind === "plain" && sameData(backup.data, data)).toBe(true);
   });
@@ -86,5 +95,56 @@ describe("bản sao lưu dùng chung với app desktop", () => {
 
   it("tham số Argon2id giống app desktop", () => {
     expect(generateKdf()).toMatchObject({ memoryKib: 19456, iterations: 2, parallelism: 1 });
+  });
+
+  it("giữ group khi ghi rồi đọc lại", async () => {
+    const data: VaultData = {
+      accounts: [
+        {
+          id: "a",
+          issuer: "X",
+          label: "",
+          secret: "JBSWY3DPEHPK3PXP",
+          algorithm: "SHA1",
+          digits: 6,
+          period: 30,
+          createdAt: 1,
+          updatedAt: 3,
+          groupIds: ["g1", "g2"],
+        },
+      ],
+      deleted: [],
+      groups: [
+        { id: "g1", name: "Công việc", hidden: true, updatedAt: 2 },
+        { id: "g2", name: "Cũ", hidden: false, updatedAt: 2, deletedAt: 4 },
+      ],
+    };
+    const kdf = generateKdf();
+    const key = await deriveKey("pw", { ...kdf, memoryKib: 64, iterations: 1 });
+    const sealed = parseBackup(await sealFile(data, key, { ...kdf, memoryKib: 64, iterations: 1 }));
+    if (sealed.kind !== "encrypted") throw new Error("phải là bản mã hoá");
+    expect(sealed.file.version).toBe(3);
+    expect(await openFile(sealed.file, key)).toEqual(data);
+    const plain = parseBackup(plainFile(data));
+    expect(plain.kind === "plain" && plain.data).toEqual(data);
+  });
+
+  it("từ chối bản không mã hoá của phiên bản mới hơn", () => {
+    expect(() =>
+      parseBackup('{"format":"authenticator-plain-backup","version":9,"accounts":[]}'),
+    ).toThrow("mới hơn");
+  });
+
+  it("đọc group trong bản sao lưu do app desktop tạo", async () => {
+    const backup = parseBackup(RUST_BACKUP_GROUPS);
+    if (backup.kind !== "encrypted") throw new Error("phải là bản mã hoá");
+    expect(backup.file.version).toBe(3);
+    const data = await openFile(backup.file, await deriveKey("correct horse", backup.file.kdf));
+    const work = data.groups.find((g) => g.name === "Công việc");
+    const old = data.groups.find((g) => g.name === "Cũ");
+    expect(work).toMatchObject({ hidden: true });
+    expect(work?.deletedAt).toBeUndefined();
+    expect(old?.deletedAt).toBeGreaterThan(0);
+    expect([...(data.accounts[0].groupIds ?? [])].sort()).toEqual([work!.id, old!.id].sort());
   });
 });

@@ -1,13 +1,21 @@
 import type { AccountSummary, PendingDeletion } from "@auth/core";
 import { compareId } from "./backup";
-import { type Account, changedAt, type Deleted, type VaultData } from "./types";
+import {
+  type Account,
+  changedAt,
+  type Deleted,
+  groupChangedAt,
+  type StoredGroup,
+  type VaultData,
+} from "./types";
 
 /**
  * Gộp vault của extension với bản sao lưu trên Drive. Chép nguyên quy tắc của
  * desktop/src-tauri/src/sync.rs để mọi máy gộp ra cùng một kết quả:
  * - chỉ một bên có → giữ; cả hai có → lấy bản thay đổi sau cùng.
  * - một bên còn, bên kia đã xoá sau lần thay đổi cuối → chờ người dùng xác nhận, không tự xoá.
- * - tài khoản trùng secret được gộp làm một, giữ bản có id nhỏ nhất.
+ * - tài khoản trùng secret được gộp làm một, giữ bản có id nhỏ nhất (cộng group của các bản).
+ * - group: lấy bản thay đổi sau cùng; bằng nhau thì bản đã xoá thắng.
  */
 
 interface Pending {
@@ -26,6 +34,7 @@ export interface SyncSummary {
 export interface Merge {
   accounts: Account[];
   deleted: Deleted[];
+  groups: StoredGroup[];
   pending: Pending[];
   /** Tài khoản lấy từ bản sao lưu, extension chưa có. */
   added: AccountSummary[];
@@ -72,6 +81,7 @@ export function computeMerge(local: VaultData, remote: VaultData): Merge {
   return {
     accounts,
     deleted,
+    groups: mergeGroups(local.groups, remote.groups),
     pending,
     added: newIn(accounts, local.accounts),
     uploaded: newIn(accounts, remote.accounts),
@@ -118,7 +128,7 @@ export function resolveMerge(
   }
   dedup(accounts);
   deleted.sort((a, b) => compareId(a.id, b.id));
-  return { data: { accounts, deleted }, summary: result };
+  return { data: { accounts, deleted, groups: merge.groups.map((g) => ({ ...g })) }, summary: result };
 }
 
 function mergeDeleted(a?: Deleted, b?: Deleted): Deleted | undefined {
@@ -131,17 +141,36 @@ function mergeDeleted(a?: Deleted, b?: Deleted): Deleted | undefined {
     : { id: newer.id, deletedAt: newer.deletedAt, account: newer.account };
 }
 
-/** Gộp tài khoản trùng secret, giữ bản có id nhỏ nhất. Kết quả sắp theo id. */
+/** Gộp tài khoản trùng secret, giữ bản có id nhỏ nhất (cộng group của các bản bị bỏ). */
 function dedup(accounts: Account[]) {
   accounts.sort((a, b) => compareId(a.id, b.id));
-  const seen = new Set<string>();
+  const kept = new Map<string, Account>();
   let write = 0;
   for (const account of accounts) {
-    if (seen.has(account.secret)) continue;
-    seen.add(account.secret);
+    const first = kept.get(account.secret);
+    if (first) {
+      const ids = [...new Set([...(first.groupIds ?? []), ...(account.groupIds ?? [])])].sort(compareId);
+      first.groupIds = ids;
+      continue;
+    }
+    kept.set(account.secret, account);
     accounts[write++] = account;
   }
   accounts.length = write;
+}
+
+function mergeGroups(local: StoredGroup[], remote: StoredGroup[]): StoredGroup[] {
+  const merged = new Map<string, StoredGroup>();
+  const rank = (g: StoredGroup): [number, number] => [groupChangedAt(g), g.deletedAt !== undefined ? 1 : 0];
+  for (const group of [...local, ...remote]) {
+    const current = merged.get(group.id);
+    if (current) {
+      const [a, b] = [rank(group), rank(current)];
+      if (!(a[0] > b[0] || (a[0] === b[0] && a[1] > b[1]))) continue;
+    }
+    merged.set(group.id, group);
+  }
+  return [...merged.values()].sort((a, b) => compareId(a.id, b.id));
 }
 
 /** Tài khoản trong `merged` mà `base` chưa có (khác id và khác secret). */

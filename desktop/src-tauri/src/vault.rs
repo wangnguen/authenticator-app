@@ -23,11 +23,15 @@ use zeroize::Zeroizing;
 pub type SharedVault = Arc<Mutex<Vault>>;
 
 /// v1: nội dung giải mã là mảng tài khoản. v2: `{ accounts, deleted }` (thêm Thùng rác).
-/// App bản cũ gặp v2 sẽ báo "phiên bản không hỗ trợ" thay vì đọc sai.
-const FILE_VERSION: u32 = 2;
+/// v3: thêm `groups` và `groupIds` của tài khoản.
+/// App bản cũ gặp bản mới hơn sẽ báo "phiên bản không hỗ trợ" thay vì đọc rồi ghi đè làm mất
+/// dữ liệu nó không biết (ví dụ group).
+const FILE_VERSION: u32 = 3;
 const MIN_FILE_VERSION: u32 = 1;
 const AAD: &[u8] = b"authenticator-vault-v1";
 pub const MIN_PASSWORD_LEN: usize = 8;
+/// Độ dài tối đa của tên group (ký tự).
+pub const MAX_GROUP_NAME: usize = 40;
 /// Số bản vault cũ giữ lại trong thư mục `history` (trước khi khôi phục/đồng bộ thay đổi vault).
 const HISTORY_KEEP: usize = 10;
 
@@ -54,6 +58,10 @@ pub(crate) struct Account {
     /// Vault cũ không có trường này thì coi như bằng `created_at`.
     #[serde(default)]
     pub(crate) updated_at: u64,
+    /// Các group chứa tài khoản (một tài khoản có thể ở nhiều group). Đổi group cũng cập nhật
+    /// `updated_at` để đồng bộ lấy đúng bản mới nhất.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) group_ids: Vec<String>,
 }
 
 impl Account {
@@ -82,12 +90,40 @@ pub(crate) struct Deleted {
     pub(crate) account: Option<Account>,
 }
 
+/// Group để lọc danh sách mã. Xoá group chỉ đánh dấu `deleted_at` (để máy khác biết là đã xoá),
+/// không xoá tài khoản nào.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Group {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    /// Ẩn: tài khoản chỉ thuộc các group ẩn không hiện trong danh sách "Tất cả".
+    #[serde(default)]
+    pub(crate) hidden: bool,
+    /// Lần đổi tên / ẩn hiện cuối, Unix ms.
+    pub(crate) updated_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) deleted_at: Option<u64>,
+}
+
+impl Group {
+    pub(crate) fn changed_at(&self) -> u64 {
+        self.updated_at.max(self.deleted_at.unwrap_or(0))
+    }
+
+    pub(crate) fn active(&self) -> bool {
+        self.deleted_at.is_none()
+    }
+}
+
 /// Nội dung đã giải mã của vault, cũng là nội dung của bản sao lưu.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct VaultData {
     pub(crate) accounts: Vec<Account>,
     #[serde(default)]
     pub(crate) deleted: Vec<Deleted>,
+    #[serde(default)]
+    pub(crate) groups: Vec<Group>,
 }
 
 /// Nội dung giải mã: vault v1 là mảng tài khoản, v2 là [`VaultData`].
@@ -104,7 +140,7 @@ impl From<StoredData> for VaultData {
             StoredData::Current(data) => data,
             StoredData::Legacy(accounts) => Self {
                 accounts,
-                deleted: Vec::new(),
+                ..Self::default()
             },
         }
     }
@@ -213,6 +249,19 @@ pub struct CodeEntry {
     pub digits: u32,
     pub period: u64,
     pub expires_at: u64,
+    /// Các group (chưa bị xoá) chứa tài khoản.
+    pub group_ids: Vec<String>,
+}
+
+/// Group hiển thị trên thanh lọc.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupInfo {
+    pub id: String,
+    pub name: String,
+    pub hidden: bool,
+    /// Số tài khoản trong group.
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -234,6 +283,8 @@ pub struct ImportResult {
 }
 
 const PLAIN_BACKUP_FORMAT: &str = "authenticator-plain-backup";
+/// v2: thêm group. (App bản cũ không kiểm tra version của bản không mã hoá.)
+const PLAIN_BACKUP_VERSION: u32 = 2;
 
 /// Bản sao lưu của vault không mật khẩu: danh sách tài khoản dạng JSON, không mã hoá.
 #[derive(Serialize, Deserialize)]
@@ -449,6 +500,9 @@ fn parse_backup(bytes: &[u8]) -> AppResult<Backup> {
     let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| invalid_backup())?;
     if value["format"] == PLAIN_BACKUP_FORMAT {
         let backup: PlainBackup = serde_json::from_value(value).map_err(|_| invalid_backup())?;
+        if backup.version > PLAIN_BACKUP_VERSION {
+            return Err(newer_backup());
+        }
         return Ok(Backup::Plain(backup.data));
     }
     let file: VaultFile = serde_json::from_value(value).map_err(|_| invalid_backup())?;
@@ -456,12 +510,16 @@ fn parse_backup(bytes: &[u8]) -> AppResult<Backup> {
         return Err(invalid_backup());
     }
     if !file.supported() {
-        return Err(AppError::new(
-            "INVALID_BACKUP",
-            "Bản sao lưu được tạo bởi phiên bản app mới hơn. Hãy cập nhật app.",
-        ));
+        return Err(newer_backup());
     }
     Ok(Backup::Encrypted(file))
+}
+
+fn newer_backup() -> AppError {
+    AppError::new(
+        "INVALID_BACKUP",
+        "Bản sao lưu được tạo bởi phiên bản app mới hơn. Hãy cập nhật app.",
+    )
 }
 
 struct Unlocked {
@@ -575,7 +633,7 @@ impl Vault {
             Protection::Device(_) => {
                 let backup = PlainBackup {
                     format: PLAIN_BACKUP_FORMAT.into(),
-                    version: 1,
+                    version: PLAIN_BACKUP_VERSION,
                     data: unlocked.data.clone(),
                 };
                 Ok(serde_json::to_vec_pretty(&backup)?)
@@ -882,9 +940,14 @@ impl Vault {
 
     pub fn codes(&self) -> AppResult<Vec<CodeEntry>> {
         let now = now_ms();
-        let mut entries: Vec<CodeEntry> = self
-            .unlocked()?
-            .data
+        let data = &self.unlocked()?.data;
+        let active: Vec<&str> = data
+            .groups
+            .iter()
+            .filter(|g| g.active())
+            .map(|g| g.id.as_str())
+            .collect();
+        let mut entries: Vec<CodeEntry> = data
             .accounts
             .iter()
             .map(|acc| {
@@ -903,6 +966,12 @@ impl Vault {
                     digits: acc.digits,
                     period: acc.period,
                     expires_at,
+                    group_ids: acc
+                        .group_ids
+                        .iter()
+                        .filter(|id| active.contains(&id.as_str()))
+                        .cloned()
+                        .collect(),
                 }
             })
             .collect();
@@ -986,6 +1055,141 @@ impl Vault {
             return Err(AppError::invalid_account("Tất cả tài khoản đã tồn tại."));
         }
         Ok(result)
+    }
+
+    /// Các group (chưa xoá), sắp theo tên.
+    pub fn groups(&self) -> AppResult<Vec<GroupInfo>> {
+        let data = &self.unlocked()?.data;
+        let mut groups: Vec<GroupInfo> = data
+            .groups
+            .iter()
+            .filter(|g| g.active())
+            .map(|g| GroupInfo {
+                id: g.id.clone(),
+                name: g.name.clone(),
+                hidden: g.hidden,
+                count: data.accounts.iter().filter(|a| a.group_ids.contains(&g.id)).count(),
+            })
+            .collect();
+        groups.sort_by_key(|g| g.name.to_lowercase());
+        Ok(groups)
+    }
+
+    fn group_info(&self, id: &str) -> AppResult<GroupInfo> {
+        self.groups()?
+            .into_iter()
+            .find(|g| g.id == id)
+            .ok_or_else(AppError::not_found)
+    }
+
+    /// Tên đã chuẩn hoá, không trùng (không phân biệt hoa thường) với group khác.
+    fn group_name(&self, name: &str, except: Option<&str>) -> AppResult<String> {
+        let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
+        if name.is_empty() {
+            return Err(AppError::new("INVALID_GROUP", "Tên group không được để trống."));
+        }
+        if name.chars().count() > MAX_GROUP_NAME {
+            return Err(AppError::new(
+                "INVALID_GROUP",
+                format!("Tên group tối đa {MAX_GROUP_NAME} ký tự."),
+            ));
+        }
+        let taken = self.unlocked()?.data.groups.iter().any(|g| {
+            g.active() && Some(g.id.as_str()) != except && g.name.to_lowercase() == name.to_lowercase()
+        });
+        if taken {
+            return Err(AppError::new("INVALID_GROUP", format!("Đã có group \"{name}\".")));
+        }
+        Ok(name)
+    }
+
+    fn active_group_mut(&mut self, id: &str) -> AppResult<&mut Group> {
+        self.unlocked_mut()?
+            .data
+            .groups
+            .iter_mut()
+            .find(|g| g.id == id && g.active())
+            .ok_or_else(AppError::not_found)
+    }
+
+    pub fn create_group(&mut self, name: &str) -> AppResult<GroupInfo> {
+        let name = self.group_name(name, None)?;
+        let group = Group {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            hidden: false,
+            updated_at: now_ms(),
+            deleted_at: None,
+        };
+        let id = group.id.clone();
+        self.unlocked_mut()?.data.groups.push(group);
+        self.save()?;
+        self.group_info(&id)
+    }
+
+    pub fn rename_group(&mut self, id: &str, name: &str) -> AppResult<GroupInfo> {
+        let name = self.group_name(name, Some(id))?;
+        let group = self.active_group_mut(id)?;
+        if group.name != name {
+            group.name = name;
+            group.updated_at = now_ms();
+            self.save()?;
+        }
+        self.group_info(id)
+    }
+
+    pub fn set_group_hidden(&mut self, id: &str, hidden: bool) -> AppResult<GroupInfo> {
+        let group = self.active_group_mut(id)?;
+        if group.hidden != hidden {
+            group.hidden = hidden;
+            group.updated_at = now_ms();
+            self.save()?;
+        }
+        self.group_info(id)
+    }
+
+    /// Xoá group. Tài khoản trong group vẫn còn, chỉ không còn thuộc group này.
+    pub fn delete_group(&mut self, id: &str) -> AppResult<()> {
+        let group = self.active_group_mut(id)?;
+        group.deleted_at = Some(now_ms().max(group.updated_at));
+        self.save()
+    }
+
+    /// Đặt lại các group của một tài khoản.
+    pub fn set_account_groups(&mut self, account_id: &str, group_ids: &[String]) -> AppResult<()> {
+        let unlocked = self.unlocked_mut()?;
+        let mut ids: Vec<String> = Vec::new();
+        for id in group_ids {
+            if !unlocked.data.groups.iter().any(|g| &g.id == id && g.active()) {
+                return Err(AppError::not_found());
+            }
+            if !ids.contains(id) {
+                ids.push(id.clone());
+            }
+        }
+        ids.sort();
+        let account = unlocked
+            .data
+            .accounts
+            .iter_mut()
+            .find(|a| a.id == account_id)
+            .ok_or_else(AppError::not_found)?;
+        // Giữ lại id của group đã xoá (không hiện ra) để không làm đổi dữ liệu không cần thiết.
+        let mut next: Vec<String> = account
+            .group_ids
+            .iter()
+            .filter(|id| !unlocked.data.groups.iter().any(|g| &&g.id == id && g.active()))
+            .cloned()
+            .collect();
+        next.extend(ids);
+        next.sort();
+        next.dedup();
+        if next != account.group_ids {
+            account.group_ids = next;
+            account.updated_at = now_ms();
+            self.save()?;
+        }
+        Ok(())
     }
 
     /// Chuyển tài khoản vào Thùng rác (khôi phục được, và đồng bộ báo cho máy khác là đã xoá).
@@ -1087,6 +1291,7 @@ fn same_data(merged: &VaultData, other: &VaultData) -> AppResult<bool> {
     let mut other = other.clone();
     other.accounts.sort_by(|a, b| a.id.cmp(&b.id));
     other.deleted.sort_by(|a, b| a.id.cmp(&b.id));
+    other.groups.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(serde_json::to_vec(merged)? == serde_json::to_vec(&other)?)
 }
 
@@ -1124,6 +1329,7 @@ fn build_account(new: NewAccount) -> AppResult<Account> {
         period: new.period,
         created_at: now,
         updated_at: now,
+        group_ids: Vec::new(),
     })
 }
 
@@ -1589,6 +1795,121 @@ mod tests {
             .deleted
             .iter()
             .any(|d| d.account.as_ref().is_some_and(|a| a.issuer == "Gone")));
+        cleanup(&[&vault]);
+    }
+
+    #[test]
+    fn groups_filter_accounts_and_one_account_can_be_in_many() {
+        let mut vault = temp_vault();
+        vault.create(None).unwrap();
+        let github = vault.add(sample()).unwrap().id;
+        let bank = vault.add(account_with("CCCCCCCC")).unwrap().id;
+
+        let work = vault.create_group("  Công   việc ").unwrap();
+        assert_eq!(work.name, "Công việc");
+        assert_eq!(vault.create_group("công VIỆC").unwrap_err().code, "INVALID_GROUP");
+        assert_eq!(vault.create_group("   ").unwrap_err().code, "INVALID_GROUP");
+        assert_eq!(vault.create_group(&"x".repeat(MAX_GROUP_NAME + 1)).unwrap_err().code, "INVALID_GROUP");
+        let personal = vault.create_group("Cá nhân").unwrap();
+
+        vault
+            .set_account_groups(&github, &[work.id.clone(), personal.id.clone(), work.id.clone()])
+            .unwrap();
+        vault.set_account_groups(&bank, std::slice::from_ref(&personal.id)).unwrap();
+        assert!(vault.set_account_groups(&bank, &["nope".into()]).is_err());
+
+        let groups = vault.groups().unwrap();
+        assert_eq!(
+            groups.iter().map(|g| (g.name.as_str(), g.count)).collect::<Vec<_>>(),
+            [("Cá nhân", 2), ("Công việc", 1)]
+        );
+        let codes = vault.codes().unwrap();
+        let entry = codes.iter().find(|c| c.id == github).unwrap();
+        assert_eq!(entry.group_ids.len(), 2);
+
+        let renamed = vault.rename_group(&work.id, "Work").unwrap();
+        assert_eq!(renamed.name, "Work");
+        assert!(vault.set_group_hidden(&work.id, true).unwrap().hidden);
+
+        // Xoá group: tài khoản vẫn còn, chỉ không còn thuộc group đó.
+        vault.delete_group(&personal.id).unwrap();
+        assert_eq!(vault.groups().unwrap().len(), 1);
+        let codes = vault.codes().unwrap();
+        assert_eq!(codes.len(), 2);
+        assert_eq!(codes.iter().find(|c| c.id == bank).unwrap().group_ids, Vec::<String>::new());
+        assert_eq!(codes.iter().find(|c| c.id == github).unwrap().group_ids, std::slice::from_ref(&work.id));
+        assert!(vault.rename_group(&personal.id, "x").is_err());
+
+        // Lưu rồi mở lại vẫn còn group.
+        let path = vault.path.clone();
+        let mut reopened = Vault::new(path);
+        reopened.auto_unlock().unwrap();
+        assert_eq!(reopened.groups().unwrap()[0].name, "Work");
+        cleanup(&[&vault]);
+    }
+
+    #[test]
+    fn groups_sync_between_devices() {
+        let mut a = temp_vault();
+        a.create(Some("correct horse")).unwrap();
+        let id = a.add(sample()).unwrap().id;
+        let group = a.create_group("Công việc").unwrap();
+        a.set_account_groups(&id, std::slice::from_ref(&group.id)).unwrap();
+        let mut drive = None;
+        sync(&mut a, &mut drive, &[]);
+        assert!(String::from_utf8_lossy(drive.as_ref().unwrap()).contains("\"version\": 3"));
+
+        let mut b = temp_vault();
+        b.restore_backup(drive.as_ref().unwrap()).unwrap();
+        b.unlock(Some("correct horse")).unwrap();
+        assert_eq!(b.groups().unwrap()[0].count, 1);
+
+        b.set_group_hidden(&group.id, true).unwrap();
+        sync(&mut b, &mut drive, &[]);
+        sync(&mut a, &mut drive, &[]);
+        assert!(a.groups().unwrap()[0].hidden);
+
+        a.delete_group(&group.id).unwrap();
+        sync(&mut a, &mut drive, &[]);
+        sync(&mut b, &mut drive, &[]);
+        assert!(b.groups().unwrap().is_empty());
+        assert_eq!(b.codes().unwrap().len(), 1);
+        cleanup(&[&a, &b]);
+    }
+
+    #[test]
+    fn rejects_backup_from_newer_version() {
+        let vault = temp_vault();
+        let plain = br#"{"format":"authenticator-plain-backup","version":9,"accounts":[]}"#;
+        assert!(parse_backup(plain).is_err());
+        let plain = br#"{"format":"authenticator-plain-backup","version":1,"accounts":[]}"#;
+        assert!(parse_backup(plain).is_ok());
+        cleanup(&[&vault]);
+    }
+
+    /// Bản v3 có group do extension tạo (master password "extension pass").
+    const EXTENSION_BACKUP_GROUPS: &str =
+        include_str!("../../../extension/src/standalone/fixtures/extension-backup-groups.json");
+
+    #[test]
+    fn opens_backup_with_groups_sealed_by_extension() {
+        let mut vault = temp_vault();
+        vault.create(Some("extension pass")).unwrap();
+        let remote = vault
+            .read_remote(Some(EXTENSION_BACKUP_GROUPS.as_bytes()), Some("extension pass"))
+            .unwrap();
+        let data = remote.data().unwrap();
+        assert_eq!(data.accounts[0].group_ids, ["g-work", "g-old"]);
+        let work = data.groups.iter().find(|g| g.id == "g-work").unwrap();
+        assert!(work.hidden && work.active() && work.name == "Công việc");
+        assert!(!data.groups.iter().find(|g| g.id == "g-old").unwrap().active());
+
+        // Đồng bộ vào vault trên máy: chỉ còn group chưa xoá, tài khoản thuộc group đó.
+        let (_, _) = vault.sync_apply(&remote, &[], None).unwrap();
+        let groups = vault.groups().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!((groups[0].name.as_str(), groups[0].hidden, groups[0].count), ("Công việc", true, 1));
+        assert_eq!(vault.codes().unwrap()[0].group_ids, ["g-work"]);
         cleanup(&[&vault]);
     }
 }

@@ -5,6 +5,7 @@ import type {
   BackupInfo,
   GoogleProfile,
   CodeEntry,
+  Group,
   ImportPreview,
   ImportResult,
   NewAccount,
@@ -37,6 +38,16 @@ export interface ExtensionInfo {
 /** Wrapper cho các Tauri command trong src-tauri/src/commands.rs. */
 export const api = {
   status: () => invoke<VaultStatus>("vault_status"),
+
+  listGroups: () => invoke<Group[]>("list_groups"),
+  createGroup: (name: string) => invoke<Group>("create_group", { name }),
+  renameGroup: (id: string, name: string) => invoke<Group>("rename_group", { id, name }),
+  setGroupHidden: (id: string, hidden: boolean) => invoke<Group>("set_group_hidden", { id, hidden }),
+  /** Xoá group; tài khoản trong group vẫn còn. */
+  deleteGroup: (id: string) => invoke<void>("delete_group", { id }),
+  /** Đặt lại toàn bộ group của một tài khoản. */
+  setAccountGroups: (accountId: string, groupIds: string[]) =>
+    invoke<void>("set_account_groups", { accountId, groupIds }),
   /** `password = null`: vault không mật khẩu, tự mở khoá bằng tài khoản Windows. */
   createVault: (password: string | null) => invoke<void>("create_vault", { password }),
   unlockVault: (password: string | null) => invoke<void>("unlock_vault", { password }),

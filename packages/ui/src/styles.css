@@ -207,3 +207,62 @@ select.auth-input {
   margin: 0;
   color: var(--auth-success);
 }
+
+/* Thanh lọc theo group. */
+.auth-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.auth-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--auth-border);
+  border-radius: 999px;
+  background: var(--auth-surface);
+  color: var(--auth-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.auth-chip:hover {
+  color: var(--auth-text);
+}
+
+.auth-chip--active {
+  border-color: var(--auth-accent);
+  background: var(--auth-surface-2);
+  color: var(--auth-text);
+}
+
+.auth-chip--hidden {
+  border-style: dashed;
+}
+
+.auth-chip--ghost {
+  border-color: transparent;
+  background: none;
+}
+
+.auth-chip__count {
+  color: var(--auth-muted);
+  font-size: 11px;
+}
+
+.auth-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.auth-tag {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--auth-surface-2);
+  color: var(--auth-muted);
+  font-size: 11px;
+}

@@ -17,6 +17,21 @@ export interface Account {
   createdAt: number;
   /** Unix ms; vault cũ không có thì coi như bằng `createdAt`. */
   updatedAt?: number;
+  /** Các group chứa tài khoản; không có = chưa thuộc group nào. */
+  groupIds?: string[];
+}
+
+/** Group, giống `Group` trong vault.rs. Xoá group chỉ đánh dấu `deletedAt`. */
+export interface StoredGroup {
+  id: string;
+  name: string;
+  hidden: boolean;
+  updatedAt: number;
+  deletedAt?: number;
+}
+
+export function groupChangedAt(group: StoredGroup): number {
+  return Math.max(group.updatedAt, group.deletedAt ?? 0);
 }
 
 export interface Deleted {
@@ -29,6 +44,11 @@ export interface Deleted {
 export interface VaultData {
   accounts: Account[];
   deleted: Deleted[];
+  groups: StoredGroup[];
+}
+
+export function emptyData(): VaultData {
+  return { accounts: [], deleted: [], groups: [] };
 }
 
 export function changedAt(account: Account): number {

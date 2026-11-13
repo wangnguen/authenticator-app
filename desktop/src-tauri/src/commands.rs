@@ -7,8 +7,8 @@ use crate::pairing::{PairRequest, PairedClient, SharedPairing};
 use crate::register::ExtensionInfo;
 use crate::sync::SyncSummary;
 use crate::vault::{
-    AccountSummary, CodeEntry, ImportPreview, ImportResult, NewAccount, RestorePreview,
-    SharedVault, SyncPreview, TrashEntry, Vault, VaultStatus,
+    AccountSummary, CodeEntry, GroupInfo, ImportPreview, ImportResult, NewAccount,
+    RestorePreview, SharedVault, SyncPreview, TrashEntry, Vault, VaultStatus,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -72,6 +72,40 @@ pub fn lock_vault(vault: State<'_, SharedVault>) -> AppResult<()> {
 #[tauri::command]
 pub fn list_codes(vault: State<'_, SharedVault>) -> AppResult<Vec<CodeEntry>> {
     with_vault(&vault, |v| v.codes())
+}
+
+#[tauri::command]
+pub fn list_groups(vault: State<'_, SharedVault>) -> AppResult<Vec<GroupInfo>> {
+    with_vault(&vault, |v| v.groups())
+}
+
+#[tauri::command]
+pub fn create_group(vault: State<'_, SharedVault>, name: String) -> AppResult<GroupInfo> {
+    with_vault(&vault, |v| v.create_group(&name))
+}
+
+#[tauri::command]
+pub fn rename_group(vault: State<'_, SharedVault>, id: String, name: String) -> AppResult<GroupInfo> {
+    with_vault(&vault, |v| v.rename_group(&id, &name))
+}
+
+#[tauri::command]
+pub fn set_group_hidden(vault: State<'_, SharedVault>, id: String, hidden: bool) -> AppResult<GroupInfo> {
+    with_vault(&vault, |v| v.set_group_hidden(&id, hidden))
+}
+
+#[tauri::command]
+pub fn delete_group(vault: State<'_, SharedVault>, id: String) -> AppResult<()> {
+    with_vault(&vault, |v| v.delete_group(&id))
+}
+
+#[tauri::command]
+pub fn set_account_groups(
+    vault: State<'_, SharedVault>,
+    account_id: String,
+    group_ids: Vec<String>,
+) -> AppResult<()> {
+    with_vault(&vault, |v| v.set_account_groups(&account_id, &group_ids))
 }
 
 #[tauri::command]

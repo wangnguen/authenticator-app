@@ -13,6 +13,7 @@ import {
   forget,
   importUris,
   listCodes,
+  listGroups,
   lock,
   type PreparedSync,
   prepareSync,
@@ -254,6 +255,7 @@ export function GoogleSource() {
           <Codes
             reloadKey={codesKey}
             list={listCodes}
+            listGroups={listGroups}
             add={async (uris) => {
               const result = await importUris(uris);
               void syncNow();

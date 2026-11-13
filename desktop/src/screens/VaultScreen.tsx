@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { errorMessage } from "@auth/core";
-import { CodeList, Icon, SearchBox, useCodes } from "@auth/ui";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { type CodeEntry, errorMessage, filterEntries, type Group } from "@auth/core";
+import { CodeList, GroupBar, Icon, SearchBox, useCodes } from "@auth/ui";
 import { api } from "../api";
+import { AccountGroupsDialog } from "./AccountGroupsDialog";
 import { AddAccountDialog } from "./AddAccountDialog";
 import { ExtensionDialog } from "./ExtensionDialog";
 import { GoogleAccountMenu } from "./GoogleAccountMenu";
+import { GroupsDialog } from "./GroupsDialog";
 import { SecurityDialog } from "./SecurityDialog";
 import { TrashDialog } from "./TrashDialog";
 
@@ -18,6 +20,12 @@ interface Props {
 export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
   const { entries, error, loading, now, refresh } = useCodes(api.listCodes);
   const [query, setQuery] = useState("");
+  const [groups, setGroups] = useState<Group[]>([]);
+  /** Group đang chọn trên thanh lọc; null = "Tất cả". */
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
+  const [groupsOpen, setGroupsOpen] = useState(false);
+  const [groupsFor, setGroupsFor] = useState<CodeEntry | null>(null);
   const [adding, setAdding] = useState(false);
   const [extensionOpen, setExtensionOpen] = useState(false);
   const [securityOpen, setSecurityOpen] = useState(false);
@@ -43,14 +51,36 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
     [],
   );
 
-  /** Tải lại danh sách mã và số tài khoản trong Thùng rác. */
+  const refreshGroups = useCallback(
+    () => api.listGroups().then(setGroups, () => setGroups([])),
+    [],
+  );
+
+  /** Tải lại danh sách mã, group và số tài khoản trong Thùng rác. */
   const reload = useCallback(async () => {
-    await Promise.all([refresh(), refreshTrash()]);
-  }, [refresh, refreshTrash]);
+    await Promise.all([refresh(), refreshTrash(), refreshGroups()]);
+  }, [refresh, refreshTrash, refreshGroups]);
 
   useEffect(() => {
     void refreshTrash();
-  }, [refreshTrash]);
+    void refreshGroups();
+  }, [refreshTrash, refreshGroups]);
+
+  // Group đang chọn bị xoá, hoặc bị ẩn trong lúc không hiện group ẩn: quay về "Tất cả".
+  useEffect(() => {
+    const group = groups.find((g) => g.id === selectedGroup);
+    if (selectedGroup && (!group || (group.hidden && !showHidden))) setSelectedGroup(null);
+  }, [groups, selectedGroup, showHidden]);
+
+  const visible = useMemo(
+    () => filterEntries(entries, groups, { selected: selectedGroup, showHidden, query }),
+    [entries, groups, selectedGroup, showHidden, query],
+  );
+  const hiddenAccounts = entries.length - filterEntries(entries, groups, {
+    selected: null,
+    showHidden: false,
+    query: "",
+  }).length;
 
   useEffect(() => {
     const unlisten = api.onVaultChanged(() => {
@@ -133,25 +163,67 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
 
       <SearchBox value={query} onChange={setQuery} />
 
+      <GroupBar
+        groups={groups}
+        selected={selectedGroup}
+        onSelect={setSelectedGroup}
+        showHidden={showHidden}
+        onToggleHidden={() => setShowHidden((v) => !v)}
+        actions={
+          <button
+            className="auth-chip auth-chip--ghost"
+            onClick={() => setGroupsOpen(true)}
+            title="Tạo, đổi tên, ẩn/hiện, xoá group"
+          >
+            <Icon name="tag" /> {groups.length === 0 ? "Tạo group" : "Quản lý"}
+          </button>
+        }
+      />
+
       {notice && <p className="auth-success">{notice}</p>}
       {(error || actionError) && <p className="auth-error">{error ?? actionError}</p>}
 
       {!loading && (
         <CodeList
-          entries={entries}
+          entries={visible}
           now={now}
           query={query}
-          emptyText='Chưa có tài khoản nào. Bấm "+ Thêm" để bắt đầu.'
+          groups={groups}
+          emptyText={
+            selectedGroup
+              ? 'Group này chưa có tài khoản. Bấm nút nhãn trên một tài khoản để thêm vào group.'
+              : entries.length > 0
+                ? "Mọi tài khoản đều thuộc group đang ẩn."
+                : 'Chưa có tài khoản nào. Bấm "+ Thêm" để bắt đầu.'
+          }
           renderActions={(entry) => (
-            <button
-              className="auth-btn auth-btn--small auth-btn--danger"
-              onClick={() => remove(entry.id)}
-              onBlur={() => setConfirmDelete(null)}
-            >
-              {confirmDelete === entry.id ? "Xác nhận?" : "Xoá"}
-            </button>
+            <div className="card-actions">
+              <button
+                className="auth-btn auth-btn--small"
+                onClick={() => setGroupsFor(entry)}
+                title="Chọn group cho tài khoản"
+              >
+                <Icon name="tag" />
+              </button>
+              <button
+                className="auth-btn auth-btn--small auth-btn--danger"
+                onClick={() => remove(entry.id)}
+                onBlur={() => setConfirmDelete(null)}
+              >
+                {confirmDelete === entry.id ? "Xác nhận?" : "Xoá"}
+              </button>
+            </div>
           )}
         />
+      )}
+
+      {!loading && !selectedGroup && !showHidden && !query && hiddenAccounts > 0 && (
+        <p className="auth-muted hint">
+          {hiddenAccounts} tài khoản thuộc group đang ẩn.{" "}
+          <button className="link-btn" onClick={() => setShowHidden(true)}>
+            Hiện
+          </button>
+        </p>
       )}
 
       {trashCount > 0 && (
@@ -168,6 +240,33 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
         <TrashDialog
           onClose={() => setTrashOpen(false)}
           onChanged={() => {
+            changed();
+            void reload();
+          }}
+        />
+      )}
+
+      {groupsOpen && (
+        <GroupsDialog
+          onClose={() => setGroupsOpen(false)}
+          onChanged={() => {
+            changed();
+            void reload();
+          }}
+        />
+      )}
+
+      {groupsFor && (
+        <AccountGroupsDialog
+          entry={groupsFor}
+          groups={groups}
+          onClose={() => {
+            setGroupsFor(null);
+            // Có thể đã tạo group mới trong hộp thoại rồi bấm Huỷ.
+            void refreshGroups();
+          }}
+          onSaved={() => {
+            setGroupsFor(null);
             changed();
             void reload();
           }}

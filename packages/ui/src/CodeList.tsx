@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { matchesQuery, type CodeEntry } from "@auth/core";
+import { type CodeEntry, type Group, matchesQuery } from "@auth/core";
 import { CodeCard } from "./CodeCard";
 
 interface Props {
@@ -8,6 +8,8 @@ interface Props {
   query?: string;
   emptyText?: string;
   renderActions?: (entry: CodeEntry) => ReactNode;
+  /** Có thì hiện tên group trên từng thẻ. */
+  groups?: Group[];
 }
 
 export function CodeList({
@@ -16,6 +18,7 @@ export function CodeList({
   query = "",
   emptyText = "Chưa có tài khoản nào.",
   renderActions,
+  groups,
 }: Props) {
   const visible = entries.filter((e) => matchesQuery(e, query));
 
@@ -33,6 +36,9 @@ export function CodeList({
           entry={entry}
           now={now}
           actions={renderActions?.(entry)}
+          tags={groups
+            ?.filter((g) => entry.groupIds?.includes(g.id))
+            .map((g) => g.name)}
         />
       ))}
     </ul>

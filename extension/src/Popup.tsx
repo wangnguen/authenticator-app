@@ -17,6 +17,7 @@ type Source = "app" | "google";
 const SOURCE_KEY = "preferredSource";
 
 const listAppCodes = () => native.request({ type: "list_codes" });
+const listAppGroups = () => native.request({ type: "list_groups" });
 const addToApp = (uri: string) => native.request({ type: "add_uri", uri });
 
 export function Popup() {
@@ -154,6 +155,7 @@ function AppSource({
   return (
     <Codes
       list={listAppCodes}
+      listGroups={listAppGroups}
       add={addToApp}
       emptyText="Chưa có tài khoản. Thêm trong app desktop hoặc quét QR."
     />
