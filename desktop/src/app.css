@@ -698,3 +698,22 @@ h3 {
   font: inherit;
   cursor: pointer;
 }
+
+/* Đang tự cập nhật lúc mở app. */
+.update-banner {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--auth-surface-2);
+  border-bottom: 1px solid var(--auth-accent);
+  font-size: 13px;
+}
+
+.update-banner--error {
+  justify-content: space-between;
+  border-bottom-color: var(--auth-danger);
+}

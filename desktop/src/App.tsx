@@ -3,6 +3,7 @@ import { errorMessage, type VaultStatus } from "@auth/core";
 import { api } from "./api";
 import { PairDialog } from "./screens/PairDialog";
 import { PasswordScreen } from "./screens/PasswordScreen";
+import { UpdateBanner } from "./screens/UpdateBanner";
 import { VaultScreen } from "./screens/VaultScreen";
 
 export function App() {
@@ -35,6 +36,7 @@ export function App() {
 
   return (
     <>
+      <UpdateBanner />
       <Screen status={status} error={error} load={load} />
       {/* Extension xin kết nối: hỏi ở mọi màn hình, kể cả khi vault đang khoá. */}
       <PairDialog />

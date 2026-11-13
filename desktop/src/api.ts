@@ -28,6 +28,11 @@ export interface ExtensionPackage {
 
 export type BrowserName = "chrome" | "edge";
 
+/** Tự cập nhật (src-tauri/src/updater.rs). */
+export type UpdateStatus =
+  | { status: "installing"; version: string }
+  | { status: "failed"; version: string; message: string };
+
 export interface ExtensionInfo {
   hostName: string;
   extensionId: string;
@@ -87,6 +92,9 @@ export const api = {
     listen<PairRequestResult>("pair-request", (e) => callback(e.payload)),
   /** Vault bị khoá từ menu tray. */
   onVaultLocked: (callback: () => void) => listen("vault-locked", callback),
+  updateStatus: () => invoke<UpdateStatus | null>("update_status"),
+  onUpdateStatus: (callback: (status: UpdateStatus) => void) =>
+    listen<UpdateStatus>("app-update", (e) => callback(e.payload)),
   /** Cửa sổ bị đóng xuống tray (app vẫn chạy nền). */
   onWindowHidden: (callback: () => void) => listen("window-hidden", callback),
 

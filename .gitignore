@@ -5,6 +5,12 @@ desktop/src-tauri/gen/
 *.log
 .DS_Store
 
-# Cấu hình OAuth Google (chứa client secret), không commit
-google-oauth.json
+# Cấu hình OAuth Google.
+# desktop/src-tauri/google-oauth.json ĐƯỢC commit: client loại "Desktop app" có client secret
+# không được coi là bí mật (Google ghi rõ vậy, và nó vốn nằm trong file app phát hành), nên để
+# trong repo cho mọi bản build (kể cả GitHub Actions) đăng nhập Google được ngay.
+# File tải trực tiếp từ Google Cloud Console (client_secret_*.json) vẫn không commit.
 client_secret*.json
+# Client "Web application" của extension: file tải về có client secret của client web (là bí mật
+# thật, extension không dùng tới). Chỉ cần client ID: đặt biến GOOGLE_EXTENSION_CLIENT_ID khi build.
+extension/google-oauth.json

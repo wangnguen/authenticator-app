@@ -33,6 +33,35 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      # Thiếu cấu hình OAuth thì app phát hành không đăng nhập Google được (người dùng bị bắt tự
+      # tạo OAuth Client ID). Dừng ngay, trước khi tạo release. Cấu hình lấy từ file
+      # desktop/src-tauri/google-oauth.json trong repo, hoặc secret GOOGLE_OAUTH_CONFIG (ưu tiên).
+      - name: Kiểm tra cấu hình Google OAuth
+        shell: bash
+        env:
+          GOOGLE_OAUTH_CONFIG: ${{ secrets.GOOGLE_OAUTH_CONFIG }}
+          GOOGLE_EXTENSION_CLIENT_ID: ${{ secrets.GOOGLE_EXTENSION_CLIENT_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          config="$GOOGLE_OAUTH_CONFIG"
+          if [ -z "$config" ] && [ -f desktop/src-tauri/google-oauth.json ]; then
+            config="$(cat desktop/src-tauri/google-oauth.json)"
+          fi
+          if [ -z "$config" ]; then
+            echo "::error::Thiếu cấu hình Google OAuth: commit file desktop/src-tauri/google-oauth.json hoặc thêm secret GOOGLE_OAUTH_CONFIG. Không có thì app phát hành không đăng nhập Google được."
+            exit 1
+          fi
+          if ! printf '%s' "$config" | jq -e '(.installed // .).client_id | strings | length > 0' > /dev/null; then
+            echo "::error::Cấu hình Google OAuth không phải JSON có client_id."
+            exit 1
+          fi
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::Chưa có secret TAURI_SIGNING_PRIVATE_KEY (khoá ký bản cập nhật, xem README mục Tự cập nhật). Thiếu thì app không tự cập nhật được."
+            exit 1
+          fi
+          if [ -z "$GOOGLE_EXTENSION_CLIENT_ID" ] && [ ! -f extension/google-oauth.json ]; then
+            echo "::warning::Chưa có OAuth Client ID cho extension: extension chỉ lấy mã qua app desktop, tab Google Drive không đăng nhập được."
+          fi
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -93,6 +122,7 @@ jobs:
               "| Extension Chrome / Edge | `authenticator-extension-*.zip` |",
               "",
               "- App chưa ký số: Windows báo SmartScreen thì chọn **More info → Run anyway**; macOS lần đầu chuột phải vào app → **Open** (hoặc `xattr -cr /Applications/Authenticator.app`).",
+              "- Từ bản này app tự cập nhật âm thầm (Windows, macOS, AppImage); bản `.deb` cài lại bằng tay.",
               "- Extension: giải nén zip, mở `chrome://extensions` (hoặc `edge://extensions`), bật **Developer mode** → **Load unpacked** → chọn thư mục vừa giải nén.",
               "- Trên macOS và Ubuntu cần đặt master password. Kết nối extension với app và đăng nhập Google trong app hiện chỉ chạy trên Windows; extension đăng nhập Google trực tiếp (tab Google Drive) thì dùng được trên mọi hệ điều hành.",
             ].join("\n");
@@ -130,7 +160,8 @@ jobs:
           - name: macOS
             os: macos-latest
             rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
-            args: --target universal-apple-darwin --bundles dmg
+            # Gói .app cần cho tự cập nhật (latest.json trỏ tới .app.tar.gz), .dmg để cài lần đầu.
+            args: --target universal-apple-darwin --bundles app,dmg
           - name: Ubuntu
             os: ubuntu-22.04
             args: --bundles deb,appimage
@@ -168,24 +199,29 @@ jobs:
       - run: pnpm build:extension
         env:
           GOOGLE_EXTENSION_CLIENT_ID: ${{ secrets.GOOGLE_EXTENSION_CLIENT_ID }}
-      # Cấu hình OAuth không nằm trong git; build.rs nhúng file này vào app nếu có.
+      # build.rs nhúng desktop/src-tauri/google-oauth.json vào app.
       - name: Nhúng cấu hình Google OAuth
         shell: bash
         env:
           GOOGLE_OAUTH_CONFIG: ${{ secrets.GOOGLE_OAUTH_CONFIG }}
         run: |
-          if [ -z "$GOOGLE_OAUTH_CONFIG" ]; then
-            echo "::warning::Chưa có secret GOOGLE_OAUTH_CONFIG, bản build này không đăng nhập Google được."
-          else
+          # Có secret thì dùng secret (ghi đè file trong repo); không thì dùng file trong repo
+          # (job "Kiểm tra" đã bảo đảm có một trong hai).
+          if [ -n "$GOOGLE_OAUTH_CONFIG" ]; then
             printf '%s' "$GOOGLE_OAUTH_CONFIG" > desktop/src-tauri/google-oauth.json
           fi
+      # Ký bản cài bằng khoá bí mật (khoá công khai nằm trong tauri.conf.json) và tạo latest.json
+      # cho tự cập nhật; các job Windows / macOS / Ubuntu cùng gộp vào một latest.json của release.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: desktop
           tauriScript: pnpm tauri
           releaseId: ${{ needs.create-release.outputs.release-id }}
+          includeUpdaterJson: true
           args: ${{ matrix.args }}
 
   build-extension:

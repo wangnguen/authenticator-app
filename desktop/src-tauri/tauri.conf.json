@@ -17,7 +17,8 @@
         "width": 420,
         "height": 680,
         "minWidth": 360,
-        "minHeight": 480
+        "minHeight": 480,
+        "visible": false
       }
     ],
     "security": {
@@ -26,7 +27,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -37,6 +40,18 @@
     ],
     "macOS": {
       "signingIdentity": "-"
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE4NzczRjAyRTYwRkNEM0UKUldRK3pRL21BajkzcUJra0pZSXEwcEdSb0dXSEhaOC9RSzdBdVRnd2w0Z1BORllVemIrZk5mVnkK",
+      "endpoints": [
+        "https://github.com/wangnguen/authenticator-app/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "quiet"
+      }
     }
   }
 }

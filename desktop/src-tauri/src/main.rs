@@ -15,6 +15,7 @@ mod pairing;
 mod register;
 mod sync;
 mod totp;
+mod updater;
 mod vault;
 
 fn main() {

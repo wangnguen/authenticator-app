@@ -1,7 +1,7 @@
 use crate::google::Google;
 use crate::pairing::{Pairing, SharedPairing};
 use crate::vault::{SharedVault, Vault};
-use crate::{browser_extension, commands, ipc, register};
+use crate::{browser_extension, commands, ipc, register, updater};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, WindowEvent};
@@ -91,6 +91,8 @@ pub fn run() {
         }))
         // Mở trình duyệt mặc định cho bước đăng nhập Google.
         .plugin(tauri_plugin_opener::init())
+        // Tự cập nhật âm thầm qua GitHub Releases (xem updater.rs).
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Đóng cửa sổ chính = ẩn xuống tray; thoát hẳn bằng menu "Thoát" của tray.
         // Không có tray (lỗi, hoặc không phải Windows) thì đóng là thoát như bình thường.
         .on_window_event(|window, event| {
@@ -130,6 +132,14 @@ pub fn run() {
             if let Err(e) = setup_tray(app) {
                 eprintln!("Không tạo được icon ở khay hệ thống: {e}");
             }
+
+            // Cửa sổ được tạo ẩn (tauri.conf.json). Vừa tự cập nhật ở nền thì giữ ẩn ở tray như
+            // trước khi cập nhật; còn lại (hoặc không có tray để mở lại) thì hiện ra.
+            let start_hidden = updater::take_start_hidden(&data_dir);
+            if !(start_hidden && TRAY_READY.load(Ordering::Relaxed)) {
+                show_main_window(app.handle());
+            }
+            updater::start(app.handle().clone(), data_dir.clone());
 
             let ctx = ipc::Context {
                 vault,
@@ -180,6 +190,7 @@ pub fn run() {
             commands::pairing_decide,
             commands::paired_extensions,
             commands::revoke_extension,
+            updater::update_status,
         ])
         .run(tauri::generate_context!())
         .expect("không khởi động được ứng dụng");

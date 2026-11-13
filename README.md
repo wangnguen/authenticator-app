@@ -118,7 +118,8 @@ Cấu hình một lần (OAuth Client riêng cho extension):
 2. **Create credentials → OAuth client ID → Web application**. Mục **Authorized redirect URIs** thêm
    `https://dhlimcjaejobpdoekahaiiojdgmmgkno.chromiumapp.org/` (ID cố định nhờ `key` trong
    manifest, giống nhau trên Chrome và Edge).
-3. Tải file JSON về, lưu thành `extension/google-oauth.json` (bị .gitignore), hoặc đặt biến môi
+3. Tải file JSON về, lưu thành `extension/google-oauth.json` (bị .gitignore vì có client secret của
+   client web, là bí mật thật), hoặc đặt biến môi
    trường `GOOGLE_EXTENSION_CLIENT_ID` lúc build. Chỉ cần client ID, extension không dùng client
    secret (luồng implicit qua `chrome.identity.launchWebAuthFlow`).
 4. `pnpm build:extension` rồi bấm **Reload** ở trang extensions.
@@ -165,15 +166,15 @@ Cần tạo OAuth Client ID một lần (khoảng 5 phút):
      đăng nhập được).
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
    - Application type: **Desktop app** → **Create** → **Download JSON**.
-5. Đổi tên file vừa tải thành `google-oauth.json` và copy vào:
-   ```
-   %APPDATA%\com.authenticator.app\google-oauth.json
-   ```
-   (File có dạng `{"installed": {"client_id": ..., "client_secret": ...}}`. Không commit file này.)
+5. Repo đã có sẵn `desktop/src-tauri/google-oauth.json` (được commit): `build.rs` nhúng cấu hình
+   vào app lúc build, nên mọi bản build (kể cả bản phát hành từ GitHub Actions) đăng nhập Google
+   được ngay. Client loại *Desktop app* có client secret **không được coi là bí mật** (Google ghi
+   rõ vậy, và nó vốn nằm trong file app phát hành), nên để công khai trong repo được.
 
-   Hoặc đặt file ở `desktop/src-tauri/google-oauth.json` (đã có trong `.gitignore`): `build.rs`
-   sẽ nhúng cấu hình vào exe lúc build, máy nào chạy bản build đó cũng đăng nhập được.
-   File trong `%APPDATA%` được ưu tiên hơn cấu hình nhúng.
+   Muốn dùng OAuth client của riêng bạn: thay nội dung file đó bằng file JSON vừa tải
+   (`{"installed": {"client_id": ..., "client_secret": ...}}` hoặc dạng phẳng), hoặc đặt file ở
+   `%APPDATA%\com.authenticator.app\google-oauth.json` (được ưu tiên hơn cấu hình nhúng, không cần
+   build lại).
 6. Mở lại app → bấm **Đăng nhập Google** → trình duyệt mở trang đăng nhập → đồng ý → quay lại app.
 
 Lưu ý:
@@ -232,6 +233,31 @@ pnpm build:desktop     # build extension rồi installer NSIS (kèm extension) t
 pnpm build:extension   # zip thư mục extension/dist để đưa lên Chrome Web Store / Edge Add-ons
 ```
 
+### Tự cập nhật (`src-tauri/src/updater.rs`)
+
+App tự cập nhật **âm thầm**, không hỏi người dùng, qua `latest.json` của GitHub Release mới nhất
+(`tauri-plugin-updater`):
+
+- **Mở app**: có bản mới thì tải, cài rồi tự khởi động lại (giao diện hiện "Đang cập nhật...").
+- **Đang chạy nền ở tray**: kiểm tra mỗi 6 giờ, chỉ cài khi cửa sổ đang ẩn (không cắt ngang lúc
+  đang dùng); cài xong app mở lại vẫn ẩn ở tray.
+- Bản cập nhật phải đúng chữ ký: khoá công khai nằm trong `tauri.conf.json`
+  (`plugins.updater.pubkey`), khoá bí mật chỉ nằm ở GitHub secret. Bản không đúng chữ ký bị từ chối.
+- Windows: bộ cài NSIS chạy im lặng (`installMode: quiet`) rồi tự mở lại app. macOS: thay `.app`.
+  Ubuntu: chỉ bản **AppImage** tự cập nhật được, bản `.deb` cài lại bằng tay.
+- Chỉ tính bản đã **Publish** và không đánh dấu pre-release (`releases/latest`). Bản nháp chưa
+  được cập nhật tới.
+- Chạy dev (`pnpm dev:desktop`) thì không kiểm tra cập nhật.
+
+Chuẩn bị một lần (khoá đã được tạo ở `~/.tauri/authenticator-updater.key`, **giữ cẩn thận, mất
+khoá thì các bản đã cài không nhận được bản cập nhật nào nữa**): repo → **Settings → Secrets and
+variables → Actions**, thêm:
+
+- `TAURI_SIGNING_PRIVATE_KEY`: nội dung file `~/.tauri/authenticator-updater.key`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: nội dung file `~/.tauri/authenticator-updater.key.password`
+
+Thiếu `TAURI_SIGNING_PRIVATE_KEY` thì workflow Release dừng ngay ở bước kiểm tra.
+
 ### Release bằng GitHub Actions (chạy thủ công)
 
 Workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) chạy test, rồi build song song
@@ -244,11 +270,11 @@ và gắn vào GitHub Release `v<version>`:
 | Ubuntu / Debian | `Authenticator_<version>_amd64.deb`, `Authenticator_<version>_amd64.AppImage` |
 | Extension Chrome / Edge | `authenticator-extension-<version>.zip` |
 
-Chuẩn bị một lần: repo trên GitHub → **Settings → Secrets and variables → Actions → New repository
-secret**, tên `GOOGLE_OAUTH_CONFIG`, giá trị là toàn bộ nội dung file `desktop/src-tauri/google-oauth.json`.
-Không có secret này thì bản build vẫn chạy nhưng không đăng nhập Google được.
-Extension tự đăng nhập Google cần thêm secret `GOOGLE_EXTENSION_CLIENT_ID` (xem mục
-*Extension tự đăng nhập Google*).
+Cấu hình Google OAuth của app lấy từ `desktop/src-tauri/google-oauth.json` trong repo (hoặc secret
+`GOOGLE_OAUTH_CONFIG` nếu muốn dùng client khác, secret được ưu tiên). Thiếu cả hai thì workflow
+dừng ngay ở bước kiểm tra, không phát hành bản không đăng nhập Google được.
+Extension tự đăng nhập Google cần thêm secret `GOOGLE_EXTENSION_CLIENT_ID` (repo → **Settings →
+Secrets and variables → Actions**, xem mục *Extension tự đăng nhập Google*).
 
 Mỗi lần phát hành:
 
@@ -304,10 +330,16 @@ Extension popup ──connectNative──▶ authenticator.exe (chế độ nati
   QR (1/3, 2/3...) thì app tự gom, quét đủ cả lô thì hiện danh sách tài khoản để xác nhận. Đây là
   cách nhanh nhất vì Google Authenticator chặn chụp màn hình lúc xuất tài khoản
 - Danh sách mã có đồng hồ đếm ngược, bấm để copy, tìm kiếm, xoá (vào Thùng rác, khôi phục được)
+- **Group**: tạo / đổi tên / xoá group, một tài khoản thuộc được nhiều group (nút nhãn trên từng
+  tài khoản). Thanh chip lọc theo group ở app và extension. Group **ẩn**: tài khoản chỉ thuộc các
+  group ẩn không hiện ở "Tất cả" (bấm "n ẩn" hoặc tìm kiếm để thấy). Group đồng bộ qua Drive; xoá
+  group không xoá tài khoản. Từ bản này file vault là **v3**: app / extension bản cũ sẽ báo cần
+  cập nhật thay vì đồng bộ làm mất group, nên cập nhật app trên mọi máy
 - Đồng bộ nhiều máy qua Google Drive, xoá ở đâu cũng phải xác nhận trước khi mất khỏi máy khác
 - Extension: xem và copy mã, **điền mã vào trang** đang mở, **quét QR trên trang** để thêm tài khoản
 - Extension **tự đăng nhập Google và tự đồng bộ** với Drive, dùng được khi không có app desktop
 - Cài extension từ app (Load unpacked có hướng dẫn) khi extension chưa có trên Store
+- **Tự cập nhật âm thầm** khi mở app và khi chạy nền ở tray (bản phát hành có chữ ký)
 
 ## Kiểm thử
 
