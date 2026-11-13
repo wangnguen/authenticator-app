@@ -1,6 +1,6 @@
 import QRCode from "qrcode";
 import { describe, expect, it } from "vitest";
-import { findQrCodes, type RgbaImage } from "./qrScan";
+import { decodeQrFrame, findQrCodes, type RgbaImage } from "./qrScan";
 
 const SCALE = 4;
 const QUIET = 4;
@@ -85,5 +85,24 @@ describe("findQrCodes", () => {
   it("đọc QR nhỏ trong ảnh chụp màn hình lớn", () => {
     const image = render(1600, 900, [{ text: GITHUB, x: 1250, y: 600 }]);
     expect(findQrCodes(image)).toEqual([GITHUB]);
+  });
+});
+
+describe("decodeQrFrame", () => {
+  it("đọc QR trong khung hình", () => {
+    expect(decodeQrFrame(render(400, 300, [{ text: MIGRATION, x: 60, y: 20 }]))).toBe(MIGRATION);
+  });
+
+  it("đọc QR sáng trên nền tối khi bật inverted", () => {
+    const image = render(300, 300, [{ text: GITHUB, x: 20, y: 20 }]);
+    for (let i = 0; i < image.data.length; i += 4) {
+      image.data[i] = image.data[i + 1] = image.data[i + 2] = 255 - image.data[i];
+    }
+    expect(decodeQrFrame(image)).toBeNull();
+    expect(decodeQrFrame(image, true)).toBe(GITHUB);
+  });
+
+  it("trả về null khi không có QR", () => {
+    expect(decodeQrFrame(render(200, 200, []))).toBeNull();
   });
 });

@@ -11,3 +11,10 @@ export {
   scanOtpQrImages,
   type QrScanResult,
 } from "./qr";
+export { decodeQrFrame, type RgbaImage } from "./qrScan";
+export {
+  migrationBatch,
+  scanProgress,
+  type MigrationBatch,
+  type ScanProgress,
+} from "./migrationBatch";

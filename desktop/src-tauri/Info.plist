@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Tauri tự gộp file này vào Info.plist của bản macOS. Thiếu mô tả quyền camera thì macOS tắt app
+     ngay khi mở webcam (quét QR). -->
+<plist version="1.0">
+<dict>
+  <key>NSCameraUsageDescription</key>
+  <string>Authenticator dùng webcam để quét mã QR 2FA.</string>
+</dict>
+</plist>

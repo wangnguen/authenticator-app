@@ -14,6 +14,7 @@ import {
 } from "@auth/core";
 import { Icon, type QrScanResult, scanOtpQrImages } from "@auth/ui";
 import { api } from "../api";
+import { CameraScanDialog } from "./CameraScanDialog";
 import { ImportPreviewDialog } from "./ImportPreviewDialog";
 
 type Tab = "uri" | "manual";
@@ -72,6 +73,7 @@ export function AddAccountDialog({ onClose, onAdded }: Props) {
   const [reading, setReading] = useState(false);
   const [pending, setPending] = useState<PendingImport | null>(null);
   const [pendingError, setPendingError] = useState<string | null>(null);
+  const [camera, setCamera] = useState(false);
 
   const update = <K extends keyof NewAccount>(key: K, value: NewAccount[K]) =>
     setAccount((a) => ({ ...a, [key]: value }));
@@ -126,9 +128,27 @@ export function AddAccountDialog({ onClose, onAdded }: Props) {
         setError(noQrMessage(scan));
         return;
       }
-      const uris = scan.uris.join("\n");
-      setPendingError(null);
-      setPending({ uris, preview: await api.previewUri(uris), notes: scanNotes(scan) });
+      await showPreview(scan.uris, scanNotes(scan));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setReading(false);
+    }
+  };
+
+  /** Mở popup liệt kê tài khoản đọc được, bấm "Thêm" mới lưu. */
+  const showPreview = async (links: string[], notes: string[]) => {
+    const uris = links.join("\n");
+    setPendingError(null);
+    setPending({ uris, preview: await api.previewUri(uris), notes });
+  };
+
+  const scannedWithCamera = async (links: string[]) => {
+    setCamera(false);
+    setReading(true);
+    setError(null);
+    try {
+      await showPreview(links, []);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -223,26 +243,37 @@ export function AddAccountDialog({ onClose, onAdded }: Props) {
                 </div>
               )}
             </div>
-            <label className={busy ? "auth-btn file-btn file-btn--busy" : "auth-btn file-btn"}>
-              {busy ? (
-                "Đang đọc QR..."
-              ) : (
-                <>
-                  <Icon name="camera" /> Chọn ảnh QR (chọn được nhiều ảnh)
-                </>
-              )}
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                onChange={pickImages}
-                disabled={busy}
-                hidden
-              />
-            </label>
+            <div className="qr-actions">
+              <label className={busy ? "auth-btn file-btn file-btn--busy" : "auth-btn file-btn"}>
+                {busy ? (
+                  "Đang đọc QR..."
+                ) : (
+                  <>
+                    <Icon name="folder-open" /> Chọn ảnh QR
+                  </>
+                )}
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={pickImages}
+                  disabled={busy}
+                  hidden
+                />
+              </label>
+              <button
+                type="button"
+                className="auth-btn file-btn"
+                onClick={() => setCamera(true)}
+                disabled={busy || reading}
+              >
+                <Icon name="camera" /> Quét bằng webcam
+              </button>
+            </div>
             <p className="auth-muted hint">
-              Chọn ảnh hoặc kéo thả ảnh vào đây thì tài khoản được thêm ngay. Mỗi ảnh có thể chứa
-              nhiều QR.
+              Chọn ảnh (được nhiều ảnh) hoặc kéo thả ảnh vào đây thì tài khoản được thêm ngay. Mỗi
+              ảnh có thể chứa nhiều QR. Google Authenticator chặn chụp màn hình khi xuất tài khoản,
+              nên dùng <strong>Quét bằng webcam</strong> là nhanh nhất.
             </p>
           </>
         ) : (
@@ -312,6 +343,13 @@ export function AddAccountDialog({ onClose, onAdded }: Props) {
           </button>
         </div>
       </form>
+
+      {camera && (
+        <CameraScanDialog
+          onCancel={() => setCamera(false)}
+          onDone={(links) => void scannedWithCamera(links)}
+        />
+      )}
 
       {pending && (
         <ImportPreviewDialog

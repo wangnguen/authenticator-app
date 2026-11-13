@@ -58,6 +58,19 @@ export function findQrCodes(image: RgbaImage): string[] {
   return found;
 }
 
+/**
+ * Đọc một QR trong khung hình webcam. Chỉ quét cả khung một lần (không quét lưới như
+ * `findQrCodes`) để đủ nhanh khi gọi liên tục; `inverted`: thử thêm QR sáng trên nền tối
+ * (màn hình điện thoại ở chế độ tối), chậm gấp đôi nên chỉ nên bật xen kẽ.
+ */
+export function decodeQrFrame(image: RgbaImage, inverted = false): string | null {
+  // Không dùng "onlyInvert": jsQR 1.4 không tạo ảnh đảo màu cho tuỳ chọn đó và bị lỗi.
+  const code = jsQR(image.data, image.width, image.height, {
+    inversionAttempts: inverted ? "invertFirst" : "dontInvert",
+  });
+  return code?.data || null;
+}
+
 /** Vị trí bắt đầu các ô cạnh `size` phủ hết chiều dài `total`, chồng nhau một nửa. */
 function positions(total: number, size: number): number[] {
   const step = Math.max(1, Math.floor(size / 2));

@@ -295,6 +295,65 @@ h3 {
   text-align: center;
 }
 
+.qr-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+/* Quét QR bằng webcam. */
+.camera {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--auth-radius);
+  background: #000;
+}
+
+.camera--off {
+  display: none;
+}
+
+.camera__video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Webcam laptop quay về phía người dùng: lật như gương cho dễ căn. Chỉ lật hình hiển thị,
+     QR được đọc từ khung hình gốc. */
+  transform: scaleX(-1);
+}
+
+.camera__overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--auth-text);
+}
+
+.camera__frame {
+  position: absolute;
+  inset: 12%;
+  border: 2px dashed rgb(255 255 255 / 70%);
+  border-radius: var(--auth-radius);
+  pointer-events: none;
+}
+
+.camera__frame--done {
+  border-style: solid;
+  border-color: var(--auth-accent);
+}
+
+.camera__progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--auth-accent);
+}
+
 /* Ô nhập link: dán ảnh QR thì phủ lớp loading trong lúc đọc. */
 .paste-box {
   position: relative;

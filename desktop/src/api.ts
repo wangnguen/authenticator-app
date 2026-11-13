@@ -76,6 +76,8 @@ export const api = {
     listen<PairRequestResult>("pair-request", (e) => callback(e.payload)),
   /** Vault bị khoá từ menu tray. */
   onVaultLocked: (callback: () => void) => listen("vault-locked", callback),
+  /** Cửa sổ bị đóng xuống tray (app vẫn chạy nền). */
+  onWindowHidden: (callback: () => void) => listen("window-hidden", callback),
 
   googleAccount: () => invoke<GoogleProfile | null>("google_account"),
   /** Mở trình duyệt để đăng nhập, resolve khi đăng nhập xong. */

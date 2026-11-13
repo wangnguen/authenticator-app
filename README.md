@@ -264,6 +264,9 @@ Extension popup ──connectNative──▶ authenticator.exe (chế độ nati
   (nhiều tài khoản một lần, tự bỏ qua tài khoản trùng; dán nhiều link mỗi dòng một link)
 - Quét ảnh QR: chọn **nhiều ảnh** một lúc, **Ctrl+V** ảnh chụp màn hình hoặc **kéo thả**;
   mỗi ảnh đọc được nhiều QR và tài khoản được import ngay
+- **Quét bằng webcam**: giơ điện thoại có QR trước webcam. Export của Google Authenticator gồm nhiều
+  QR (1/3, 2/3...) thì app tự gom, quét đủ cả lô thì hiện danh sách tài khoản để xác nhận. Đây là
+  cách nhanh nhất vì Google Authenticator chặn chụp màn hình lúc xuất tài khoản
 - Danh sách mã có đồng hồ đếm ngược, bấm để copy, tìm kiếm, xoá (vào Thùng rác, khôi phục được)
 - Đồng bộ nhiều máy qua Google Drive, xoá ở đâu cũng phải xác nhận trước khi mất khỏi máy khác
 - Extension: xem và copy mã, **điền mã vào trang** đang mở, **quét QR trên trang** để thêm tài khoản
@@ -273,7 +276,7 @@ Extension popup ──connectNative──▶ authenticator.exe (chế độ nati
 
 ```bash
 cd desktop/src-tauri && cargo test   # RFC 6238, otpauth/migration, vault, đồng bộ, DPAPI, OAuth loopback, native messaging
-pnpm test                            # đọc nhiều QR trong một ảnh (packages/ui)
+pnpm test                            # đọc QR trong ảnh / khung hình webcam, lô QR export (packages/ui)
 pnpm typecheck
 ```
 

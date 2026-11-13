@@ -13,6 +13,9 @@ static TRAY_READY: AtomicBool = AtomicBool::new(false);
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const VAULT_LOCKED_EVENT: &str = "vault-locked";
 
+/// Cửa sổ chính vừa ẩn xuống tray: giao diện tắt webcam (nếu đang quét QR).
+pub const WINDOW_HIDDEN_EVENT: &str = "window-hidden";
+
 /// Hiện cửa sổ chính (kể cả khi đang ẩn ở tray) và đưa lên trước.
 pub fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -93,8 +96,10 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 if window.label() == "main" && TRAY_READY.load(Ordering::Relaxed) {
+                    use tauri::Emitter;
                     api.prevent_close();
                     let _ = window.hide();
+                    let _ = window.emit(WINDOW_HIDDEN_EVENT, ());
                 }
             }
         })
