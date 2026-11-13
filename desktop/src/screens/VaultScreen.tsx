@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { type CodeEntry, errorMessage, filterEntries, type Group } from "@auth/core";
+import { type CodeEntry, errorMessage, filterEntries, type Group, listServices } from "@auth/core";
 import { CodeList, GroupBar, Icon, mergeOrder, SearchBox, useCodes } from "@auth/ui";
 import { api } from "../api";
 import { AccountGroupsDialog } from "./AccountGroupsDialog";
@@ -13,18 +13,23 @@ import { TrashDialog } from "./TrashDialog";
 /** Filter group đang chọn, nhớ qua các lần mở app. */
 const FILTER_KEY = "auth.groupFilter";
 
-function savedFilter(): { selected: string | null; showHidden: boolean } {
+interface SavedFilter {
+  selected: string | null;
+  showHidden: boolean;
+  /** Dịch vụ đang chọn trong ô tìm kiếm (`ServiceOption.key`). */
+  service: string | null;
+}
+
+function savedFilter(): SavedFilter {
   try {
-    const value = JSON.parse(localStorage.getItem(FILTER_KEY) ?? "{}") as {
-      selected?: unknown;
-      showHidden?: unknown;
-    };
+    const value = JSON.parse(localStorage.getItem(FILTER_KEY) ?? "{}") as Record<string, unknown>;
     return {
       selected: typeof value.selected === "string" ? value.selected : null,
       showHidden: value.showHidden === true,
+      service: typeof value.service === "string" ? value.service : null,
     };
   } catch {
-    return { selected: null, showHidden: false };
+    return { selected: null, showHidden: false, service: null };
   }
 }
 
@@ -40,8 +45,11 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
   const [query, setQuery] = useState("");
   const [groups, setGroups] = useState<Group[] | null>(null);
   /** Group đang chọn trên thanh lọc; null = "Tất cả". Nhớ qua các lần mở app. */
-  const [selectedGroup, setSelectedGroup] = useState<string | null>(() => savedFilter().selected);
-  const [showHidden, setShowHidden] = useState(() => savedFilter().showHidden);
+  const [initialFilter] = useState(savedFilter);
+  const [selectedGroup, setSelectedGroup] = useState(initialFilter.selected);
+  const [showHidden, setShowHidden] = useState(initialFilter.showHidden);
+  /** Dịch vụ chọn trong ô tìm kiếm (Applovin, OpenVPN...); null = tất cả. */
+  const [service, setService] = useState(initialFilter.service);
   const [groupsOpen, setGroupsOpen] = useState(false);
   const [groupsFor, setGroupsFor] = useState<CodeEntry | null>(null);
   const [adding, setAdding] = useState(false);
@@ -92,9 +100,17 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
     if (selectedGroup && (!group || (group.hidden && !showHidden))) setSelectedGroup(null);
   }, [groups, selectedGroup, showHidden]);
 
+  // Dịch vụ đang chọn không còn tài khoản nào (đã xoá / đổi tên): bỏ chọn. Tải lỗi (danh sách
+  // rỗng) thì giữ nguyên, không mất lựa chọn đã nhớ.
   useEffect(() => {
-    localStorage.setItem(FILTER_KEY, JSON.stringify({ selected: selectedGroup, showHidden }));
-  }, [selectedGroup, showHidden]);
+    if (loading || error || entries.length === 0 || !service) return;
+    if (!listServices(entries).some((s) => s.key === service)) setService(null);
+  }, [loading, error, entries, service]);
+
+  useEffect(() => {
+    const value: SavedFilter = { selected: selectedGroup, showHidden, service };
+    localStorage.setItem(FILTER_KEY, JSON.stringify(value));
+  }, [selectedGroup, showHidden, service]);
 
   /** Kéo thả chip: đổi thứ tự trên giao diện ngay, rồi lưu (và tự đồng bộ). */
   const reorderGroups = async (ids: string[]) => {
@@ -130,9 +146,22 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
   const groupList = groups ?? [];
 
   const visible = useMemo(
-    () => filterEntries(entries, groupList, { selected: selectedGroup, showHidden, query }),
-    [entries, groupList, selectedGroup, showHidden, query],
+    () => filterEntries(entries, groupList, { selected: selectedGroup, showHidden, query, service }),
+    [entries, groupList, selectedGroup, showHidden, query, service],
   );
+  // Dịch vụ trong group đang chọn (chọn dịch vụ thì thấy cả tài khoản thuộc group ẩn).
+  const services = useMemo(
+    () =>
+      listServices(
+        filterEntries(entries, groupList, { selected: selectedGroup, showHidden: true, query: "" }),
+      ),
+    [entries, groupList, selectedGroup],
+  );
+  const allCount = filterEntries(entries, groupList, {
+    selected: selectedGroup,
+    showHidden,
+    query: "",
+  }).length;
   const hiddenAccounts = entries.length - filterEntries(entries, groupList, {
     selected: null,
     showHidden: false,
@@ -218,7 +247,14 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
         </div>
       )}
 
-      <SearchBox value={query} onChange={setQuery} />
+      <SearchBox
+        value={query}
+        onChange={setQuery}
+        services={services}
+        service={service}
+        onServiceChange={setService}
+        allCount={allCount}
+      />
 
       <GroupBar
         groups={groupList}
@@ -249,7 +285,9 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
           groups={groupList}
           onReorder={(ids) => void reorderAccounts(ids)}
           emptyText={
-            selectedGroup
+            service
+              ? "Không có tài khoản nào của dịch vụ này trong group đang chọn."
+              : selectedGroup
               ? 'Group này chưa có tài khoản. Bấm nút nhãn trên một tài khoản để thêm vào group.'
               : entries.length > 0
                 ? "Mọi tài khoản đều thuộc group đang ẩn."
@@ -276,7 +314,7 @@ export function VaultScreen({ hasPassword, onLock, onSecurityChanged }: Props) {
         />
       )}
 
-      {!loading && !selectedGroup && !showHidden && !query && hiddenAccounts > 0 && (
+      {!loading && !selectedGroup && !showHidden && !query && !service && hiddenAccounts > 0 && (
         <p className="auth-muted hint">
           {hiddenAccounts} tài khoản thuộc group đang ẩn.{" "}
           <button className="link-btn" onClick={() => setShowHidden(true)}>

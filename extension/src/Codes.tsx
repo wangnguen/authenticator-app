@@ -4,6 +4,7 @@ import {
   describeImport,
   errorMessage,
   filterEntries,
+  listServices,
   type Group,
   type ImportResult,
 } from "@auth/core";
@@ -18,6 +19,8 @@ const FILTER_KEY = "groupFilter";
 interface SavedFilter {
   selected: string | null;
   showHidden: boolean;
+  /** Dịch vụ đang chọn trong ô tìm kiếm (`ServiceOption.key`). */
+  service: string | null;
 }
 
 interface Props {
@@ -42,6 +45,8 @@ export function Codes({ list, listGroups, add, emptyText, reloadKey = 0 }: Props
   const [groups, setGroups] = useState<Group[] | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
+  /** Dịch vụ chọn trong ô tìm kiếm (Applovin, OpenVPN...); null = tất cả. */
+  const [service, setService] = useState<string | null>(null);
   /** Đã đọc filter đã lưu (trước đó không ghi đè, không kiểm tra). */
   const [filterLoaded, setFilterLoaded] = useState(false);
 
@@ -50,15 +55,16 @@ export function Codes({ list, listGroups, add, emptyText, reloadKey = 0 }: Props
       const saved = stored[FILTER_KEY] as Partial<SavedFilter> | undefined;
       setSelectedGroup(typeof saved?.selected === "string" ? saved.selected : null);
       setShowHidden(saved?.showHidden === true);
+      setService(typeof saved?.service === "string" ? saved.service : null);
       setFilterLoaded(true);
     });
   }, []);
 
   useEffect(() => {
     if (!filterLoaded) return;
-    const value: SavedFilter = { selected: selectedGroup, showHidden };
+    const value: SavedFilter = { selected: selectedGroup, showHidden, service };
     void chrome.storage.local.set({ [FILTER_KEY]: value });
-  }, [filterLoaded, selectedGroup, showHidden]);
+  }, [filterLoaded, selectedGroup, showHidden, service]);
 
   // Lỗi (ví dụ app desktop bản cũ chưa có group) thì coi như không có group.
   const refreshGroups = useCallback(
@@ -81,12 +87,32 @@ export function Codes({ list, listGroups, add, emptyText, reloadKey = 0 }: Props
     if (selectedGroup && (!group || (group.hidden && !showHidden))) setSelectedGroup(null);
   }, [groups, filterLoaded, selectedGroup, showHidden]);
 
+  // Dịch vụ đang chọn không còn tài khoản nào: bỏ chọn. Tải lỗi (vd. app desktop đang tắt, danh
+  // sách rỗng) thì giữ nguyên, không mất lựa chọn đã nhớ.
+  useEffect(() => {
+    if (loading || error || entries.length === 0 || !filterLoaded || !service) return;
+    if (!listServices(entries).some((s) => s.key === service)) setService(null);
+  }, [loading, error, entries, filterLoaded, service]);
+
   const groupList = groups ?? [];
 
   const visible = useMemo(
-    () => filterEntries(entries, groupList, { selected: selectedGroup, showHidden, query }),
-    [entries, groupList, selectedGroup, showHidden, query],
+    () => filterEntries(entries, groupList, { selected: selectedGroup, showHidden, query, service }),
+    [entries, groupList, selectedGroup, showHidden, query, service],
   );
+  // Dịch vụ trong group đang chọn (chọn dịch vụ thì thấy cả tài khoản thuộc group ẩn).
+  const services = useMemo(
+    () =>
+      listServices(
+        filterEntries(entries, groupList, { selected: selectedGroup, showHidden: true, query: "" }),
+      ),
+    [entries, groupList, selectedGroup],
+  );
+  const allCount = filterEntries(entries, groupList, {
+    selected: selectedGroup,
+    showHidden,
+    query: "",
+  }).length;
 
   const fill = async (code: string) => {
     try {
@@ -123,7 +149,14 @@ export function Codes({ list, listGroups, add, emptyText, reloadKey = 0 }: Props
   return (
     <>
       <div className="popup__toolbar">
-        <SearchBox value={query} onChange={setQuery} />
+        <SearchBox
+          value={query}
+          onChange={setQuery}
+          services={services}
+          service={service}
+          onServiceChange={setService}
+          allCount={allCount}
+        />
         <button className="auth-btn" onClick={scan} disabled={scanning} title="Quét QR trên trang">
           {scanning ? (
             "..."
@@ -153,7 +186,9 @@ export function Codes({ list, listGroups, add, emptyText, reloadKey = 0 }: Props
             query={query}
             groups={groupList}
             emptyText={
-              selectedGroup
+              service
+                ? "Không có tài khoản nào của dịch vụ này trong group đang chọn."
+                : selectedGroup
                 ? "Group này chưa có tài khoản."
                 : entries.length > 0
                   ? "Mọi tài khoản đều thuộc group đang ẩn."

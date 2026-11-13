@@ -376,3 +376,152 @@ select.auth-input {
 .auth-card--dragging .auth-card__main {
   cursor: grabbing;
 }
+
+/* Ô tìm kiếm có nút chọn dịch vụ ở bên phải (trong ô). */
+.auth-search-box {
+  position: relative;
+  min-width: 0;
+}
+
+.auth-search-box--picker {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--auth-border);
+  border-radius: var(--auth-radius);
+  background: var(--auth-surface);
+}
+
+.auth-search-box--picker:focus-within {
+  border-color: var(--auth-accent);
+}
+
+.auth-search-box--picker .auth-search {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+}
+
+.auth-service {
+  position: relative;
+  display: flex;
+  flex: none;
+  align-self: stretch;
+  max-width: 50%;
+  margin: 4px 4px 4px 0;
+  padding-left: 4px;
+  border-left: 1px solid var(--auth-border);
+}
+
+.auth-service__trigger,
+.auth-service__clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--auth-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.auth-service__trigger:hover,
+.auth-service__clear:hover,
+.auth-service__trigger[aria-expanded="true"] {
+  background: var(--auth-surface-2);
+  color: var(--auth-text);
+}
+
+.auth-service__trigger--set {
+  color: var(--auth-accent);
+  font-weight: 600;
+}
+
+.auth-service__clear {
+  flex: none;
+  padding: 0 6px;
+}
+
+.auth-service__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-service__menu {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: -5px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 260px;
+  max-width: calc(100vw - 24px);
+  padding: 6px;
+  border: 1px solid var(--auth-border);
+  border-radius: var(--auth-radius);
+  background: var(--auth-surface);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+}
+
+.auth-service__filter {
+  padding: 7px 10px;
+  font-size: 13px;
+}
+
+.auth-service__list {
+  max-height: 280px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.auth-service__option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  color: var(--auth-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.auth-service__option--active {
+  background: var(--auth-surface-2);
+}
+
+.auth-service__option--selected {
+  color: var(--auth-accent);
+}
+
+.auth-service__check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+}
+
+.auth-service__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-service__count {
+  color: var(--auth-muted);
+  font-size: 12px;
+}
+
+.auth-service__empty {
+  padding: 8px;
+  color: var(--auth-muted);
+  font-size: 13px;
+}

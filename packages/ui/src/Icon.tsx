@@ -16,6 +16,7 @@ const icons: Record<string, string> = Object.fromEntries(
 export type IconName =
   | "camera"
   | "check"
+  | "chevron-down"
   | "cloud-upload"
   | "download"
   | "eye"
@@ -29,7 +30,8 @@ export type IconName =
   | "shield-lock"
   | "sync"
   | "tag"
-  | "trash";
+  | "trash"
+  | "x";
 
 interface Props {
   name: IconName;

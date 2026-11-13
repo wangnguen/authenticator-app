@@ -1,4 +1,4 @@
-import { type CodeEntry, filterEntries, type Group, isHiddenEntry } from "@auth/core";
+import { type CodeEntry, filterEntries, type Group, isHiddenEntry, listServices } from "@auth/core";
 import { describe, expect, it } from "vitest";
 
 const entry = (id: string, groupIds?: string[]): CodeEntry => ({
@@ -48,5 +48,35 @@ describe("lọc theo group", () => {
 
   it("group đã xoá (không còn trong danh sách) không làm ẩn tài khoản", () => {
     expect(isHiddenEntry(entry("x", ["deleted-group"]), groups)).toBe(false);
+  });
+});
+
+describe("lọc theo dịch vụ", () => {
+  const svc = (id: string, issuer: string, label = "", groupIds?: string[]): CodeEntry => ({
+    ...entry(id, groupIds),
+    issuer,
+    label,
+  });
+  const list = [
+    svc("a1", "Applovin", "x"),
+    svc("a2", "AppLovin ", "y", ["secret"]),
+    svc("o1", "OpenVPN", "z", ["work"]),
+    svc("l1", "", "me@example.com"),
+  ];
+
+  it("gom theo tên in đậm, không phân biệt hoa thường; không có issuer thì lấy label", () => {
+    expect(listServices(list)).toEqual([
+      { key: "applovin", name: "Applovin", count: 2 },
+      { key: "me@example.com", name: "me@example.com", count: 1 },
+      { key: "openvpn", name: "OpenVPN", count: 1 },
+    ]);
+  });
+
+  it("chọn dịch vụ: chỉ tài khoản của dịch vụ đó (kể cả trong group ẩn), kết hợp với group và tìm kiếm", () => {
+    const filter = { selected: null, showHidden: false, query: "", service: "applovin" };
+    expect(ids(filterEntries(list, groups, filter))).toEqual(["a1", "a2"]);
+    expect(ids(filterEntries(list, groups, { ...filter, query: "y" }))).toEqual(["a2"]);
+    expect(ids(filterEntries(list, groups, { ...filter, selected: "secret" }))).toEqual(["a2"]);
+    expect(filterEntries(list, groups, { ...filter, selected: "work" })).toHaveLength(0);
   });
 });

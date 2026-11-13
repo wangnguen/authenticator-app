@@ -19,6 +19,10 @@ body {
   gap: 6px;
 }
 
+.popup__toolbar .auth-search-box {
+  flex: 1;
+}
+
 .popup__list {
   max-height: 420px;
   overflow-y: auto;
