@@ -256,7 +256,12 @@ variables → Actions**, thêm:
 - `TAURI_SIGNING_PRIVATE_KEY`: nội dung file `~/.tauri/authenticator-updater.key`
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: nội dung file `~/.tauri/authenticator-updater.key.password`
 
-Thiếu `TAURI_SIGNING_PRIVATE_KEY` thì workflow Release dừng ngay ở bước kiểm tra.
+Không có `TAURI_SIGNING_PRIVATE_KEY` (ví dụ repo fork) thì vẫn build và phát hành bình thường,
+chỉ không ký bản cập nhật nên app đã cài không tự cập nhật lên bản đó. Build ở máy (`pnpm
+build:desktop`) cũng không cần khoá: `bundle.createUpdaterArtifacts` mặc định tắt, workflow chỉ bật
+khi có secret. **Không bao giờ commit khoá bí mật**: ai có khoá đều ký được "bản cập nhật" và app
+sẽ tự cài nó âm thầm trên máy mọi người dùng. Fork muốn tự phát hành bản cập nhật thì tạo khoá riêng
+(`pnpm tauri signer generate`) và thay `plugins.updater.pubkey`, `endpoints` trong `tauri.conf.json`.
 
 ### Release bằng GitHub Actions (chạy thủ công)
 

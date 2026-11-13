@@ -56,8 +56,7 @@ jobs:
             exit 1
           fi
           if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "::error::Chưa có secret TAURI_SIGNING_PRIVATE_KEY (khoá ký bản cập nhật, xem README mục Tự cập nhật). Thiếu thì app không tự cập nhật được."
-            exit 1
+            echo "::warning::Chưa có secret TAURI_SIGNING_PRIVATE_KEY: vẫn build và phát hành, nhưng không ký bản cập nhật (không có latest.json) nên app đã cài sẽ không tự cập nhật lên bản này. Xem README mục Tự cập nhật."
           fi
           if [ -z "$GOOGLE_EXTENSION_CLIENT_ID" ] && [ ! -f extension/google-oauth.json ]; then
             echo "::warning::Chưa có OAuth Client ID cho extension: extension chỉ lấy mã qua app desktop, tab Google Drive không đăng nhập được."
@@ -189,9 +188,15 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ needs.create-release.outputs.version }}
+          HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         run: |
           conf=desktop/src-tauri/tauri.conf.json
           jq --arg v "$VERSION" '.version = $v' "$conf" > "$conf.tmp" && mv "$conf.tmp" "$conf"
+          # Có khoá ký thì tạo bản cập nhật đã ký + latest.json (mặc định tắt để ai cũng build được
+          # mà không cần khoá). Khoá bí mật chỉ nằm ở secret, không bao giờ trong repo.
+          if [ "$HAS_SIGNING_KEY" = "true" ]; then
+            jq '.bundle.createUpdaterArtifacts = true' "$conf" > "$conf.tmp" && mv "$conf.tmp" "$conf"
+          fi
           manifest=extension/public/manifest.json
           jq --arg v "$VERSION" '.version = $v' "$manifest" > "$manifest.tmp" && mv "$manifest.tmp" "$manifest"
       # build.rs nhúng extension/dist vào app để nút "Cài extension" giải nén ra cho Load unpacked.
