@@ -166,15 +166,13 @@ Cần tạo OAuth Client ID một lần (khoảng 5 phút):
      đăng nhập được).
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
    - Application type: **Desktop app** → **Create** → **Download JSON**.
-5. Repo đã có sẵn `desktop/src-tauri/google-oauth.json` (được commit): `build.rs` nhúng cấu hình
-   vào app lúc build, nên mọi bản build (kể cả bản phát hành từ GitHub Actions) đăng nhập Google
-   được ngay. Client loại *Desktop app* có client secret **không được coi là bí mật** (Google ghi
-   rõ vậy, và nó vốn nằm trong file app phát hành), nên để công khai trong repo được.
+5. Đổi tên file vừa tải thành `google-oauth.json` và đặt ở `desktop/src-tauri/google-oauth.json`
+   (bị .gitignore, không commit): `build.rs` nhúng cấu hình vào app lúc build, máy nào chạy bản
+   build đó cũng đăng nhập được. File có dạng `{"installed": {"client_id": ..., "client_secret": ...}}`
+   (hoặc dạng phẳng). Bản phát hành từ GitHub Actions lấy cấu hình từ secret `GOOGLE_OAUTH_CONFIG`.
 
-   Muốn dùng OAuth client của riêng bạn: thay nội dung file đó bằng file JSON vừa tải
-   (`{"installed": {"client_id": ..., "client_secret": ...}}` hoặc dạng phẳng), hoặc đặt file ở
-   `%APPDATA%\com.authenticator.app\google-oauth.json` (được ưu tiên hơn cấu hình nhúng, không cần
-   build lại).
+   Hoặc đặt file ở `%APPDATA%\com.authenticator.app\google-oauth.json` (được ưu tiên hơn cấu hình
+   nhúng, không cần build lại).
 6. Mở lại app → bấm **Đăng nhập Google** → trình duyệt mở trang đăng nhập → đồng ý → quay lại app.
 
 Lưu ý:
@@ -275,9 +273,9 @@ và gắn vào GitHub Release `v<version>`:
 | Ubuntu / Debian | `Authenticator_<version>_amd64.deb`, `Authenticator_<version>_amd64.AppImage` |
 | Extension Chrome / Edge | `authenticator-extension-<version>.zip` |
 
-Cấu hình Google OAuth của app lấy từ `desktop/src-tauri/google-oauth.json` trong repo (hoặc secret
-`GOOGLE_OAUTH_CONFIG` nếu muốn dùng client khác, secret được ưu tiên). Thiếu cả hai thì workflow
-dừng ngay ở bước kiểm tra, không phát hành bản không đăng nhập Google được.
+Cấu hình Google OAuth của app lấy từ secret `GOOGLE_OAUTH_CONFIG` (repo → **Settings → Secrets and
+variables → Actions**), giá trị là toàn bộ nội dung file `desktop/src-tauri/google-oauth.json`.
+Thiếu thì workflow dừng ngay ở bước kiểm tra, không phát hành bản không đăng nhập Google được.
 Extension tự đăng nhập Google cần thêm secret `GOOGLE_EXTENSION_CLIENT_ID` (repo → **Settings →
 Secrets and variables → Actions**, xem mục *Extension tự đăng nhập Google*).
 
