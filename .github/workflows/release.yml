@@ -94,7 +94,7 @@ jobs:
               "",
               "- App chưa ký số: Windows báo SmartScreen thì chọn **More info → Run anyway**; macOS lần đầu chuột phải vào app → **Open** (hoặc `xattr -cr /Applications/Authenticator.app`).",
               "- Extension: giải nén zip, mở `chrome://extensions` (hoặc `edge://extensions`), bật **Developer mode** → **Load unpacked** → chọn thư mục vừa giải nén.",
-              "- Trên macOS và Ubuntu cần đặt master password. Kết nối extension và đăng nhập Google hiện chỉ chạy trên Windows.",
+              "- Trên macOS và Ubuntu cần đặt master password. Kết nối extension với app và đăng nhập Google trong app hiện chỉ chạy trên Windows; extension đăng nhập Google trực tiếp (tab Google Drive) thì dùng được trên mọi hệ điều hành.",
             ].join("\n");
 
             // Release nháp không tìm được bằng API theo tag, nên duyệt danh sách.
@@ -164,7 +164,10 @@ jobs:
           manifest=extension/public/manifest.json
           jq --arg v "$VERSION" '.version = $v' "$manifest" > "$manifest.tmp" && mv "$manifest.tmp" "$manifest"
       # build.rs nhúng extension/dist vào app để nút "Cài extension" giải nén ra cho Load unpacked.
+      # OAuth Client ID (Web application) để extension tự đăng nhập Google; thiếu thì vẫn build.
       - run: pnpm build:extension
+        env:
+          GOOGLE_EXTENSION_CLIENT_ID: ${{ secrets.GOOGLE_EXTENSION_CLIENT_ID }}
       # Cấu hình OAuth không nằm trong git; build.rs nhúng file này vào app nếu có.
       - name: Nhúng cấu hình Google OAuth
         shell: bash
@@ -203,7 +206,10 @@ jobs:
         run: |
           manifest=extension/public/manifest.json
           jq --arg v "$VERSION" '.version = $v' "$manifest" > "$manifest.tmp" && mv "$manifest.tmp" "$manifest"
+      # OAuth Client ID (Web application) để extension tự đăng nhập Google; thiếu thì vẫn build.
       - run: pnpm build:extension
+        env:
+          GOOGLE_EXTENSION_CLIENT_ID: ${{ secrets.GOOGLE_EXTENSION_CLIENT_ID }}
       - name: Đóng gói
         # Không đặt tên biến là ZIP: lệnh zip đọc biến môi trường ZIP làm tuỳ chọn mặc định.
         env:

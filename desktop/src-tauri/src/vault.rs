@@ -1561,4 +1561,34 @@ mod tests {
         assert_eq!(last.codes().unwrap().len(), 1);
         let _ = fs::remove_dir_all(vault.path.parent().unwrap());
     }
+
+    /// Bản sao lưu do extension (TypeScript, extension/src/standalone/backup.ts) mã hoá với
+    /// master password "extension pass". Chiều ngược lại nằm trong backup.test.ts của extension.
+    const EXTENSION_BACKUP: &str =
+        include_str!("../../../extension/src/standalone/fixtures/extension-backup.json");
+
+    #[test]
+    fn opens_backup_sealed_by_extension() {
+        let mut vault = temp_vault();
+        vault.create(Some("another password")).unwrap();
+        let bytes = Some(EXTENSION_BACKUP.as_bytes());
+        assert!(vault.read_remote(bytes, Some("wrong password")).is_err());
+
+        let remote = vault.read_remote(bytes, Some("extension pass")).unwrap();
+        let data = remote.data().unwrap();
+        assert_eq!(data.accounts.len(), 1);
+        let account = &data.accounts[0];
+        assert_eq!((account.issuer.as_str(), account.label.as_str()), ("Ext", "eve"));
+        assert_eq!(account.secret, "JBSWY3DPEHPK3PXP");
+        assert_eq!(account.algorithm, Algorithm::Sha512);
+        assert_eq!((account.digits, account.period), (7, 45));
+        assert_eq!(account.changed_at(), 1_700_000_000_000);
+        assert_eq!(data.deleted.len(), 2);
+        assert!(data.deleted.iter().any(|d| d.id == "purged" && d.account.is_none()));
+        assert!(data
+            .deleted
+            .iter()
+            .any(|d| d.account.as_ref().is_some_and(|a| a.issuer == "Gone")));
+        cleanup(&[&vault]);
+    }
 }

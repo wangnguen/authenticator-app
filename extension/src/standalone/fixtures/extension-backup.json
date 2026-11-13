@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "kdf": {
+    "salt": "Lwr7QW87W20xOL+4Kthjxg==",
+    "memoryKib": 19456,
+    "iterations": 2,
+    "parallelism": 1
+  },
+  "nonce": "AT4TXgsxhAcg1nTV",
+  "ciphertext": "YRlVUQz6+rhMB2ccARdh35YF5BRtSTKkdP+Co044JjuhQgbkWyvicuHzWh/afiEb8Uh9ELS0fNM+YuH2iXr1vmqiWIRH8dBQiRzDzIpQkWaSka2EVgsPb92cW1wpjkE3lh1LNYagIM2+h5wJfHn8jFL9qjlwGkawG8rlP7V0GEIuybI1wBVx9y6x+nkbfP3bzeNFj6pl222Kl6V5yfHu6hIP8LGmgfdrITrFXm8GGcgbLF1f20tsMnr+3TJgVdKal4ha19OctxWTcRPcsB/LWUm9+jLbT9Ne80bnwFuq0yl/1jySgRBKN1zRZA0eZy5WIiSnYhEr0k8JH0VyobdPcKux+88BPfDbfOOxexYBbnptk7Nf2I5hDAlstzZLPIOvbdr1+Kq19L0j+eVdYx2OgIAtJPY8P0P3/gEYZHEn7uP/+8c98g4+mViUc138FAZD2xPMr/d3REyyOtAq4BKAWQaFMzQIRh97RtaVhFpU3DWH/h+gPc8u6NK+wfpSjGX+zs+zO6wvND6WuR/Ju6bEggabe0peUMBidFISnNQmploBdS4vx8zjUOpoDZCoqd3NcY91cE7jDZUWX29AotheMqLNNCEcqU6xEPyc7Ri/+tYqz0kaj+0DnxtGHK3AwWNuu6rKkMOdoFmrRawTnBxV2+1ZGuSVljUpejwmoUretDQuYCZ3Aul9haRFmlzq3aPk3EFSwIuWhE+8nmr5OF39FmT8cO8="
+}

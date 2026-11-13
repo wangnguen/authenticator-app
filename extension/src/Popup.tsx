@@ -1,15 +1,99 @@
-import { useCallback, useEffect, useState } from "react";
-import { describeImport, errorMessage, isAppError, type VaultStatus } from "@auth/core";
-import { CodeList, Icon, SearchBox, useCodes } from "@auth/ui";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { errorMessage, isAppError, type VaultStatus } from "@auth/core";
+import { Icon } from "@auth/ui";
+import { Codes } from "./Codes";
+import { GoogleSource } from "./GoogleSource";
 import { loadToken, native, NativeError, saveToken } from "./native";
 import { Pairing } from "./Pairing";
-import { fillCode, scanQrOnPage } from "./page";
+import { googleProfile } from "./standalone/google";
 
-type Notice = { kind: "success" | "error"; text: string } | null;
+/**
+ * Hai nguồn mã:
+ * - "app": hỏi app desktop qua native messaging (secret không bao giờ rời app).
+ * - "google": vault riêng của extension, đồng bộ trực tiếp với Google Drive (không cần app).
+ */
+type Source = "app" | "google";
 
-const listCodes = () => native.request({ type: "list_codes" });
+const SOURCE_KEY = "preferredSource";
+
+const listAppCodes = () => native.request({ type: "list_codes" });
+const addToApp = (uri: string) => native.request({ type: "add_uri", uri });
 
 export function Popup() {
+  const [source, setSource] = useState<Source | null>(null);
+  /** App desktop không chạy nên tự chuyển sang Google Drive (không lưu lựa chọn). */
+  const [fallback, setFallback] = useState(false);
+  /** Chỉ tự chuyển nguồn lúc mở popup; người dùng đã tự chọn tab thì thôi. */
+  const autoFallback = useRef(true);
+
+  useEffect(() => {
+    void chrome.storage.local.get(SOURCE_KEY).then((stored) => {
+      setSource(stored[SOURCE_KEY] === "google" ? "google" : "app");
+    });
+  }, []);
+
+  const choose = (next: Source) => {
+    autoFallback.current = false;
+    setFallback(false);
+    setSource(next);
+    void chrome.storage.local.set({ [SOURCE_KEY]: next });
+  };
+
+  const appUnavailable = useCallback(async () => {
+    if (autoFallback.current && (await googleProfile())) {
+      autoFallback.current = false;
+      setFallback(true);
+      setSource("google");
+    }
+  }, []);
+
+  return (
+    <main className="popup">
+      <header className="popup__header">
+        <h1>
+          <Icon name="shield-lock" size={20} /> Authenticator
+        </h1>
+        {source && (
+          <div className="source-tabs" role="tablist">
+            <button
+              role="tab"
+              aria-selected={source === "app"}
+              className={source === "app" ? "source-tab source-tab--active" : "source-tab"}
+              onClick={() => choose("app")}
+              title="Lấy mã từ app desktop"
+            >
+              App
+            </button>
+            <button
+              role="tab"
+              aria-selected={source === "google"}
+              className={source === "google" ? "source-tab source-tab--active" : "source-tab"}
+              onClick={() => choose("google")}
+              title="Đồng bộ trực tiếp với Google Drive, không cần app"
+            >
+              Google Drive
+            </button>
+          </div>
+        )}
+      </header>
+      {fallback && (
+        <p className="auth-muted hint">App desktop không chạy, đang dùng bản đồng bộ từ Google Drive.</p>
+      )}
+      {source === "app" && (
+        <AppSource onUnavailable={appUnavailable} onUseGoogle={() => choose("google")} />
+      )}
+      {source === "google" && <GoogleSource />}
+    </main>
+  );
+}
+
+function AppSource({
+  onUnavailable,
+  onUseGoogle,
+}: {
+  onUnavailable: () => void;
+  onUseGoogle: () => void;
+}) {
   const [status, setStatus] = useState<VaultStatus | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   /** null: đã ghép đôi; "new": chưa ghép đôi; "revoked": token cũ bị app thu hồi. */
@@ -30,123 +114,68 @@ export function Popup() {
         setPairing(hadToken ? "revoked" : "new");
       } else {
         setConnectError(errorMessage(e));
+        onUnavailable();
       }
     }
-  }, []);
+  }, [onUnavailable]);
 
   useEffect(() => {
     void checkStatus();
   }, [checkStatus]);
 
-  let body;
-  if (pairing) {
-    body = <Pairing revoked={pairing === "revoked"} onPaired={() => void checkStatus()} />;
-  } else if (connectError) {
-    body = <Message text={connectError} onRetry={checkStatus} />;
-  } else if (!status) {
-    body = <p className="auth-empty">Đang kết nối app desktop...</p>;
-  } else if (!status.exists) {
-    body = <Message text="Chưa tạo vault. Hãy mở app desktop để thiết lập." onRetry={checkStatus} />;
-  } else if (!status.unlocked) {
-    body = <Message text="Vault đang khoá. Hãy mở khoá trong app desktop." onRetry={checkStatus} />;
-  } else {
-    body = <Codes />;
-  }
+  const useGoogle = (
+    <button className="auth-btn" onClick={onUseGoogle}>
+      Dùng Google Drive (không cần app)
+    </button>
+  );
 
+  if (pairing) {
+    return (
+      <>
+        <Pairing revoked={pairing === "revoked"} onPaired={() => void checkStatus()} />
+        <div className="popup__message">{useGoogle}</div>
+      </>
+    );
+  }
+  if (connectError) return <Message text={connectError} onRetry={checkStatus} extra={useGoogle} />;
+  if (!status) return <p className="auth-empty">Đang kết nối app desktop...</p>;
+  if (!status.exists) {
+    return (
+      <Message
+        text="Chưa tạo vault. Hãy mở app desktop để thiết lập."
+        onRetry={checkStatus}
+        extra={useGoogle}
+      />
+    );
+  }
+  if (!status.unlocked) {
+    return <Message text="Vault đang khoá. Hãy mở khoá trong app desktop." onRetry={checkStatus} />;
+  }
   return (
-    <main className="popup">
-      <header className="popup__header">
-        <h1>
-          <Icon name="shield-lock" size={20} /> Authenticator
-        </h1>
-      </header>
-      {body}
-    </main>
+    <Codes
+      list={listAppCodes}
+      add={addToApp}
+      emptyText="Chưa có tài khoản. Thêm trong app desktop hoặc quét QR."
+    />
   );
 }
 
-function Message({ text, onRetry }: { text: string; onRetry: () => void }) {
+export function Message({
+  text,
+  onRetry,
+  extra,
+}: {
+  text: string;
+  onRetry: () => void;
+  extra?: ReactNode;
+}) {
   return (
     <div className="popup__message">
       <p className="auth-muted">{text}</p>
       <button className="auth-btn" onClick={onRetry}>
         Thử lại
       </button>
+      {extra}
     </div>
-  );
-}
-
-function Codes() {
-  const { entries, error, loading, now, refresh } = useCodes(listCodes);
-  const [query, setQuery] = useState("");
-  const [notice, setNotice] = useState<Notice>(null);
-  const [scanning, setScanning] = useState(false);
-
-  const fill = async (code: string) => {
-    try {
-      if (await fillCode(code)) window.close();
-      else setNotice({ kind: "error", text: "Không tìm thấy ô nhập mã trên trang." });
-    } catch (e) {
-      setNotice({ kind: "error", text: errorMessage(e) });
-    }
-  };
-
-  const scan = async () => {
-    setScanning(true);
-    setNotice(null);
-    try {
-      const uris = await scanQrOnPage();
-      if (uris.length === 0) {
-        setNotice({ kind: "error", text: "Không thấy QR code 2FA trên trang." });
-        return;
-      }
-      const result = await native.request({ type: "add_uri", uri: uris.join("\n") });
-      setNotice({ kind: "success", text: describeImport(result) });
-      await refresh();
-    } catch (e) {
-      setNotice({ kind: "error", text: errorMessage(e) });
-    } finally {
-      setScanning(false);
-    }
-  };
-
-  return (
-    <>
-      <div className="popup__toolbar">
-        <SearchBox value={query} onChange={setQuery} />
-        <button className="auth-btn" onClick={scan} disabled={scanning} title="Quét QR trên trang">
-          {scanning ? (
-            "..."
-          ) : (
-            <>
-              <Icon name="camera" /> QR
-            </>
-          )}
-        </button>
-      </div>
-      {notice && (
-        <p className={notice.kind === "success" ? "auth-success" : "auth-error"}>{notice.text}</p>
-      )}
-      {error && <p className="auth-error">{error}</p>}
-      {!loading && (
-        <div className="popup__list">
-          <CodeList
-            entries={entries}
-            now={now}
-            query={query}
-            emptyText="Chưa có tài khoản. Thêm trong app desktop hoặc quét QR."
-            renderActions={(entry) => (
-              <button
-                className="auth-btn auth-btn--small"
-                onClick={() => fill(entry.code)}
-                title="Điền mã vào trang"
-              >
-                Điền
-              </button>
-            )}
-          />
-        </div>
-      )}
-    </>
   );
 }

@@ -91,6 +91,40 @@ App dùng scope `drive.file`: chỉ thấy file do chính nó tạo, không đ�
   chia sẻ file) đều thấy secret 2FA. Khôi phục xong vault mở sẵn, không cần mật khẩu.
   (Nếu bản trên Drive đang mã hoá thì đồng bộ hỏi master password của nó và giữ nguyên mã hoá.)
 
+### Extension tự đăng nhập Google (không cần app desktop)
+
+Popup extension có 2 tab: **App** (lấy mã từ app desktop như trên) và **Google Drive**. Tab Google
+Drive đăng nhập Google ngay trong trình duyệt và dùng chung bản sao lưu `vault-backup.json` với app,
+nên dùng được trên máy không cài app (hoặc trên macOS / Ubuntu, nơi chưa kết nối extension với app được).
+
+- Lần đầu: tải bản sao lưu về; bản có master password thì nhập master password (giống trên app).
+  Drive chưa có bản nào thì đặt master password để tạo vault mới ngay trong extension.
+- Vault của extension lưu trong `chrome.storage.local` đúng định dạng file trên Drive (đã mã hoá nếu
+  có master password). Key giải mã chỉ nằm trong `chrome.storage.session`: đóng trình duyệt hoặc bấm
+  **Khoá** là phải nhập lại master password.
+- Tự đồng bộ khi mở popup, sau khi quét QR thêm tài khoản và mỗi 15 phút ở nền (service worker),
+  cùng quy tắc gộp với app (`extension/src/standalone/merge.ts` chép từ `sync.rs`): tài khoản bị xoá
+  ở máy khác **không tự mất**, icon extension hiện dấu **!** để bạn xác nhận.
+- App desktop không chạy thì popup tự chuyển sang tab Google Drive.
+- Code: `extension/src/standalone/` (TOTP, đọc link otpauth, mã hoá Argon2id + AES-GCM, gộp, Drive).
+  Test so chéo với Rust: extension giải mã bản do app tạo (`fixtures/rust-backup.json`) và app giải
+  mã bản do extension tạo (test `opens_backup_sealed_by_extension` trong `vault.rs`).
+
+Cấu hình một lần (OAuth Client riêng cho extension):
+
+1. [Google Cloud Console](https://console.cloud.google.com/apis/credentials), **cùng project** với
+   OAuth client của app desktop (scope `drive.file` chỉ cho thấy file do chính project đó tạo, khác
+   project thì extension không thấy bản sao lưu của app).
+2. **Create credentials → OAuth client ID → Web application**. Mục **Authorized redirect URIs** thêm
+   `https://dhlimcjaejobpdoekahaiiojdgmmgkno.chromiumapp.org/` (ID cố định nhờ `key` trong
+   manifest, giống nhau trên Chrome và Edge).
+3. Tải file JSON về, lưu thành `extension/google-oauth.json` (bị .gitignore), hoặc đặt biến môi
+   trường `GOOGLE_EXTENSION_CLIENT_ID` lúc build. Chỉ cần client ID, extension không dùng client
+   secret (luồng implicit qua `chrome.identity.launchWebAuthFlow`).
+4. `pnpm build:extension` rồi bấm **Reload** ở trang extensions.
+
+Release bằng GitHub Actions: thêm secret `GOOGLE_EXTENSION_CLIENT_ID` (chỉ client ID).
+
 ### Đồng bộ nhiều máy (`src-tauri/src/sync.rs`)
 
 **Đồng bộ với Google Drive** tải bản trên Drive về, gộp với vault trên máy rồi tải bản đã gộp lên.
@@ -213,6 +247,8 @@ và gắn vào GitHub Release `v<version>`:
 Chuẩn bị một lần: repo trên GitHub → **Settings → Secrets and variables → Actions → New repository
 secret**, tên `GOOGLE_OAUTH_CONFIG`, giá trị là toàn bộ nội dung file `desktop/src-tauri/google-oauth.json`.
 Không có secret này thì bản build vẫn chạy nhưng không đăng nhập Google được.
+Extension tự đăng nhập Google cần thêm secret `GOOGLE_EXTENSION_CLIENT_ID` (xem mục
+*Extension tự đăng nhập Google*).
 
 Mỗi lần phát hành:
 
@@ -270,13 +306,14 @@ Extension popup ──connectNative──▶ authenticator.exe (chế độ nati
 - Danh sách mã có đồng hồ đếm ngược, bấm để copy, tìm kiếm, xoá (vào Thùng rác, khôi phục được)
 - Đồng bộ nhiều máy qua Google Drive, xoá ở đâu cũng phải xác nhận trước khi mất khỏi máy khác
 - Extension: xem và copy mã, **điền mã vào trang** đang mở, **quét QR trên trang** để thêm tài khoản
+- Extension **tự đăng nhập Google và tự đồng bộ** với Drive, dùng được khi không có app desktop
 - Cài extension từ app (Load unpacked có hướng dẫn) khi extension chưa có trên Store
 
 ## Kiểm thử
 
 ```bash
 cd desktop/src-tauri && cargo test   # RFC 6238, otpauth/migration, vault, đồng bộ, DPAPI, OAuth loopback, native messaging
-pnpm test                            # đọc QR trong ảnh / khung hình webcam, lô QR export (packages/ui)
+pnpm test                            # đọc QR (packages/ui); TOTP, mã hoá, gộp của extension, so chéo với Rust
 pnpm typecheck
 ```
 

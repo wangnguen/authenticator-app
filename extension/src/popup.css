@@ -48,3 +48,106 @@ body {
 .hint {
   font-size: 12px;
 }
+
+.popup__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Chọn nguồn mã: app desktop hoặc Google Drive. */
+.source-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--auth-radius);
+  background: var(--auth-surface);
+}
+
+.source-tab {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--auth-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.source-tab--active {
+  background: var(--auth-surface-2);
+  color: var(--auth-text);
+}
+
+.popup__form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.popup__form p {
+  margin: 0;
+}
+
+.popup__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.sync-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.sync-bar--attention {
+  padding: 6px 8px;
+  border: 1px solid #e5484d;
+  border-radius: var(--auth-radius);
+  color: var(--auth-text);
+}
+
+.pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.pending-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--auth-radius);
+  background: var(--auth-surface);
+  cursor: pointer;
+}
+
+.account-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--auth-border);
+  font-size: 12px;
+}
+
+.account-bar__email {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

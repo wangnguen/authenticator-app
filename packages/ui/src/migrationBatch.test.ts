@@ -18,10 +18,13 @@ describe("migrationBatch", () => {
     expect(migrationBatch(uri(3, 1, 42))).toEqual({ id: 42, index: 1, size: 3 });
   });
 
-  it("đọc link export thật của Google Authenticator", () => {
-    const real =
-      "otpauth-migration://offline?data=CjEKCkhlbGxvId6tvu8SGEV4YW1wbGU6YWxpY2VAZXhhbXBsZS5jb20aB0V4YW1wbGUgASgBMAIQARgBIAA%3D";
-    expect(migrationBatch(real)).toEqual({ id: 0, index: 0, size: 1 });
+  it("link không có trường lô thì coi như chỉ một QR", () => {
+    const data = btoa(String.fromCharCode(0x0a, 0x04, 0x0a, 0x02, 0x41, 0x42));
+    expect(migrationBatch(`otpauth-migration://offline?data=${encodeURIComponent(data)}`)).toEqual({
+      id: 0,
+      index: 0,
+      size: 1,
+    });
   });
 
   it("bỏ qua link không phải migration hoặc dữ liệu hỏng", () => {
