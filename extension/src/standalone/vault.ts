@@ -1,6 +1,5 @@
 import type { AccountSummary, CodeEntry, ImportResult, PendingDeletion } from "@auth/core";
 import {
-  type Backup,
   deriveKey,
   fromBase64,
   generateKdf,
@@ -59,7 +58,8 @@ interface OpenVault {
 
 export type StandaloneStatus =
   | { state: "empty" }
-  | { state: "locked" }
+  /** `unsynced`: có thay đổi (thêm tài khoản) chưa lên được Drive. */
+  | { state: "locked"; unsynced: boolean }
   | { state: "open"; hasPassword: boolean; lastSync: number | null; unsynced: boolean };
 
 /** Việc cần người dùng làm sau lần tự đồng bộ (hiện chấm đỏ trên icon extension). */
@@ -87,11 +87,6 @@ async function rememberKey(protection: Protection): Promise<void> {
   } else {
     await chrome.storage.session.remove(SESSION_KEY);
   }
-}
-
-async function openWith(backup: Backup, key: Uint8Array | null): Promise<OpenVault["data"] | null> {
-  if (backup.kind === "plain") return backup.data;
-  return key ? openFile(backup.file, key) : null;
 }
 
 /** Vault đang mở; `null` nếu chưa có hoặc đang khoá. */
@@ -125,16 +120,20 @@ async function writeStored(stored: StoredVault): Promise<void> {
   await chrome.storage.local.set({ [VAULT_KEY]: stored });
 }
 
+/** Trạng thái vault, chỉ xem có key trong phiên hay không (không giải mã cả vault). */
 export async function standaloneStatus(): Promise<StandaloneStatus> {
   const stored = await readStored();
   if (!stored) return { state: "empty" };
-  const vault = await openVault();
-  if (!vault) return { state: "locked" };
+  const unsynced = stored.syncedRevision !== stored.revision;
+  const backup = parseBackup(stored.file);
+  if (backup.kind === "encrypted" && !(await sessionKey(backup.file.kdf))) {
+    return { state: "locked", unsynced };
+  }
   return {
     state: "open",
-    hasPassword: vault.protection.kind === "password",
+    hasPassword: backup.kind === "encrypted",
     lastSync: stored.lastSync,
-    unsynced: stored.syncedRevision !== stored.revision,
+    unsynced,
   };
 }
 
@@ -154,7 +153,7 @@ export async function lock(): Promise<void> {
 
 /** Xoá vault của extension (khi đăng xuất Google). */
 export async function forget(): Promise<void> {
-  await chrome.storage.local.remove([VAULT_KEY, ATTENTION_KEY]);
+  await chrome.storage.local.remove(VAULT_KEY);
   await chrome.storage.session.remove(SESSION_KEY);
   await setAttention(null);
 }
@@ -230,15 +229,22 @@ export async function prepareSync(password?: string): Promise<PreparedSync | Fir
   const vault = local ? await requireOpen() : null;
   const remote = await fetchBackup();
 
-  if (!remote) {
+  // File rỗng: lần tạo bản sao lưu trước bị gián đoạn. Coi như chưa có dữ liệu nhưng vẫn ghi đè
+  // đúng file đó (`expected` = phiên bản của nó).
+  if (!remote || !remote.text.trim()) {
+    const version = remote ? remote.modifiedTime : null;
     if (!vault) return { kind: "create" };
-    return prepared(vault, null, null, vault.protection);
+    return prepared(vault, null, version, vault.protection);
   }
 
   const backup = parseBackup(remote.text);
   let protection: Protection;
+  let remoteData: VaultData;
   if (backup.kind === "plain") {
-    protection = { kind: "plain" };
+    // Bản trên Drive không mật khẩu (từ vault không mật khẩu của app): vault của extension đang có
+    // master password thì giữ nguyên mã hoá, không tự chuyển sang lưu dạng chữ thường.
+    protection = vault ? vault.protection : { kind: "plain" };
+    remoteData = backup.data;
   } else {
     const kdf = backup.file.kdf;
     let key =
@@ -256,8 +262,8 @@ export async function prepareSync(password?: string): Promise<PreparedSync | Fir
       key = await deriveKey(password, kdf);
     }
     protection = { kind: "password", kdf, key };
+    remoteData = await openFile(backup.file, key);
   }
-  const remoteData = (await openWith(backup, protection.kind === "password" ? protection.key : null))!;
   if (!vault) {
     // Lần đầu: nhận nguyên dữ liệu trên Drive.
     const merge = computeMerge({ accounts: [], deleted: [] }, remoteData);
@@ -338,8 +344,12 @@ export async function createVault(password: string): Promise<void> {
   const data: VaultData = { accounts: [], deleted: [] };
   await navigator.locks.request(SYNC_LOCK, async () => {
     if (await readStored()) throw new VaultError("VAULT_EXISTS", "Extension đã có vault.");
+    const remote = await fetchBackup();
+    if (remote?.text.trim()) {
+      throw new VaultError("BACKUP_CHANGED", "Drive vừa có bản sao lưu. Hãy bấm Kiểm tra lại Drive.");
+    }
     const file = await serialize(data, protection);
-    const backupVersion = await uploadBackup(file, null);
+    const backupVersion = await uploadBackup(file, remote ? remote.modifiedTime : null);
     await writeStored({ file, revision: 1, backupVersion, syncedRevision: 1, lastSync: Date.now() });
     await rememberKey(protection);
   });

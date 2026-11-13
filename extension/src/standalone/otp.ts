@@ -1,4 +1,10 @@
-import type { Algorithm, CodeEntry, NewAccount } from "@auth/core";
+import {
+  type Algorithm,
+  type CodeEntry,
+  decodeLooseBase64,
+  type NewAccount,
+  readProtoFields,
+} from "@auth/core";
 import { type Account, type ParsedAccounts, VaultError } from "./types";
 
 /**
@@ -217,72 +223,13 @@ function parseNumber(value: string, message: string): number {
 
 // ---- otpauth-migration:// (protobuf MigrationPayload, xem migration.rs) ----
 
-type Field = { field: number; varint?: number; bytes?: Uint8Array };
-
-function readFields(buf: Uint8Array): Field[] | null {
-  const fields: Field[] = [];
-  let pos = 0;
-  const varint = (): number | null => {
-    let result = 0;
-    for (let shift = 0; shift < 64; shift += 7) {
-      if (pos >= buf.length) return null;
-      const byte = buf[pos++];
-      if (shift < 53) result += (byte & 0x7f) * 2 ** shift;
-      if ((byte & 0x80) === 0) return result;
-    }
-    return null;
-  };
-  while (pos < buf.length) {
-    const key = varint();
-    if (key === null) return null;
-    const field = Math.floor(key / 8);
-    switch (key % 8) {
-      case 0: {
-        const value = varint();
-        if (value === null) return null;
-        fields.push({ field, varint: value });
-        break;
-      }
-      case 1:
-        pos += 8;
-        break;
-      case 2: {
-        const length = varint();
-        if (length === null || pos + length > buf.length) return null;
-        fields.push({ field, bytes: buf.subarray(pos, pos + length) });
-        pos += length;
-        break;
-      }
-      case 5:
-        pos += 4;
-        break;
-      default:
-        return null;
-    }
-    if (pos > buf.length) return null;
-  }
-  return fields;
-}
-
-function decodeBase64(data: string): Uint8Array | null {
-  const cleaned = data.trim().replace(/=+$/, "").replace(/ /g, "+");
-  const standard = cleaned.replace(/-/g, "+").replace(/_/g, "/");
-  try {
-    return Uint8Array.from(atob(standard + "=".repeat((4 - (standard.length % 4)) % 4)), (c) =>
-      c.charCodeAt(0),
-    );
-  } catch {
-    return null;
-  }
-}
-
 function parseMigration(url: URL): ParsedAccounts {
   // Với scheme lạ, URL vẫn tách được query string.
   const data = url.searchParams.get("data");
   if (!data) throw invalidUri("Link migration thiếu tham số data.");
-  const bytes = decodeBase64(data);
+  const bytes = decodeLooseBase64(data);
   if (!bytes) throw invalidUri("Dữ liệu migration không phải base64 hợp lệ.");
-  const fields = readFields(bytes);
+  const fields = readProtoFields(bytes);
   if (!fields) throw invalidUri("Dữ liệu migration bị hỏng.");
 
   const result: ParsedAccounts = { accounts: [], unsupported: 0 };
@@ -298,7 +245,7 @@ function parseMigration(url: URL): ParsedAccounts {
 
 /** `null`: loại/thuật toán chưa hỗ trợ; `undefined`: dữ liệu hỏng. */
 function decodeParams(bytes: Uint8Array): NewAccount | null | undefined {
-  const fields = readFields(bytes);
+  const fields = readProtoFields(bytes);
   if (!fields) return undefined;
   const text = (b?: Uint8Array) => (b ? new TextDecoder().decode(b) : "");
   let secret: Uint8Array = new Uint8Array();

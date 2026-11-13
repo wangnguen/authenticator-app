@@ -1,6 +1,6 @@
 import { googleProfile, signIn } from "./standalone/google";
 import { SIGN_IN_MESSAGE, type SignInResponse } from "./standalone/messages";
-import { autoSync } from "./standalone/vault";
+import { autoSync, forget } from "./standalone/vault";
 
 /**
  * Service worker: tự đồng bộ vault của extension với Google Drive mỗi 15 phút (khi đã đăng nhập
@@ -38,7 +38,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   if (sender.id !== chrome.runtime.id || (message as { type?: string })?.type !== SIGN_IN_MESSAGE) {
     return false;
   }
-  signIn()
+  googleProfile()
+    .then(async (current) => {
+      // Chưa đăng nhập mà còn vault (của tài khoản cũ) thì xoá trước khi nhận tài khoản mới.
+      if (!current) await forget();
+      return signIn(current?.email);
+    })
     .then(async (profile) => {
       sendResponse({ ok: true, profile } satisfies SignInResponse);
       await run();

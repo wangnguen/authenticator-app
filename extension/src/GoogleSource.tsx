@@ -66,6 +66,8 @@ export function GoogleSource() {
       setAttention(await autoSync());
       setStatus(await standaloneStatus());
       setCodesKey((k) => k + 1);
+    } catch (e) {
+      setError(errorMessage(e));
     } finally {
       setSyncing(false);
     }
@@ -93,8 +95,12 @@ export function GoogleSource() {
         void syncNow();
       }
     } catch (e) {
+      const code = errorCode(e);
+      if (code === "GOOGLE_SESSION_EXPIRED" || code === "GOOGLE_SIGNED_OUT") {
+        setAttention({ kind: "signin" });
+        setView({ kind: "signin" });
+      }
       setError(errorMessage(e));
-      if (errorCode(e) === "GOOGLE_SESSION_EXPIRED") setAttention({ kind: "signin" });
     }
   }, [firstSync, syncNow]);
 
@@ -246,7 +252,7 @@ export function GoogleSource() {
             onSignIn={() => void doSignIn()}
           />
           <Codes
-            key={codesKey}
+            reloadKey={codesKey}
             list={listCodes}
             add={async (uris) => {
               const result = await importUris(uris);
@@ -516,16 +522,17 @@ function AccountBar({
 }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
-  const unsynced = status?.state === "open" && status.unsynced;
+  const unsynced = status !== null && status.state !== "empty" && status.unsynced;
 
   const doSignOut = async (force: boolean) => {
     setBusy(true);
     try {
-      if (!force && status?.state === "open") {
-        // Thử đẩy thay đổi lên Drive trước khi xoá dữ liệu trong extension.
+      if (!force) {
+        // Thử đẩy thay đổi lên Drive trước khi xoá dữ liệu trong extension (vault đang khoá thì
+        // không đồng bộ được, chỉ kiểm tra).
         await autoSync().catch(() => null);
         const after = await standaloneStatus();
-        if (after.state === "open" && after.unsynced) {
+        if (after.state !== "empty" && after.unsynced) {
           setConfirming(true);
           return;
         }
@@ -543,7 +550,8 @@ function AccountBar({
       {confirming ? (
         <>
           <span className="auth-error">
-            Có tài khoản thêm trong extension chưa lên được Drive. Đăng xuất sẽ mất chúng.
+            Có tài khoản thêm trong extension chưa lên được Drive
+            {status?.state === "locked" ? " (mở khoá để đồng bộ)" : ""}. Đăng xuất sẽ mất chúng.
           </span>
           <button className="auth-btn auth-btn--small" onClick={() => setConfirming(false)}>
             Huỷ

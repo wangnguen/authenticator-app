@@ -1,3 +1,5 @@
+import { decodeLooseBase64, readProtoFields } from "@auth/core";
+
 /**
  * Google Authenticator chia bản export nhiều tài khoản thành nhiều QR (1/3, 2/3...). Mỗi QR là
  * `otpauth-migration://offline?data=<base64 protobuf>` có các trường:
@@ -16,53 +18,18 @@ export function migrationBatch(uri: string): MigrationBatch | null {
   if (!match) return null;
   const data = new URLSearchParams(match[1]).get("data");
   if (!data) return null;
-  const bytes = decodeBase64(data);
-  if (!bytes) return null;
+  const bytes = decodeLooseBase64(data);
+  const fields = bytes && readProtoFields(bytes);
+  if (!fields) return null;
 
   const batch: MigrationBatch = { id: 0, index: 0, size: 1 };
-  let pos = 0;
-  const varint = (): number | null => {
-    let result = 0;
-    for (let shift = 0; shift < 64; shift += 7) {
-      if (pos >= bytes.length) return null;
-      const byte = bytes[pos++];
-      // Chỉ cần 32 bit thấp (int32); các byte cao hơn chỉ đọc qua.
-      if (shift < 32) result += (byte & 0x7f) * 2 ** shift;
-      if ((byte & 0x80) === 0) return result;
-    }
-    return null;
-  };
-
-  while (pos < bytes.length) {
-    const key = varint();
-    if (key === null) return null;
-    const field = Math.floor(key / 8);
-    switch (key % 8) {
-      case 0: {
-        const value = varint();
-        if (value === null) return null;
-        if (field === 3) batch.size = value;
-        else if (field === 4) batch.index = value;
-        else if (field === 5) batch.id = value;
-        break;
-      }
-      case 1:
-        pos += 8;
-        break;
-      case 2: {
-        const length = varint();
-        if (length === null) return null;
-        pos += length;
-        break;
-      }
-      case 5:
-        pos += 4;
-        break;
-      default:
-        return null;
-    }
+  for (const { field, varint } of fields) {
+    if (varint === undefined) continue;
+    if (field === 3) batch.size = varint;
+    else if (field === 4) batch.index = varint;
+    else if (field === 5) batch.id = varint;
   }
-  if (pos !== bytes.length || batch.size < 1 || batch.index >= batch.size) return null;
+  if (batch.size < 1 || batch.index >= batch.size) return null;
   return batch;
 }
 
@@ -94,15 +61,4 @@ export function scanProgress(uris: string[]): ScanProgress {
     batches,
     plain,
   };
-}
-
-function decodeBase64(data: string): Uint8Array | null {
-  // URLSearchParams đổi "+" thành dấu cách; link cũng có thể dùng base64url.
-  const normalized = data.trim().replace(/ /g, "+").replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
-  try {
-    return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
-  } catch {
-    return null;
-  }
 }

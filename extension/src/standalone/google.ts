@@ -116,8 +116,13 @@ async function authorize(interactive: boolean, loginHint?: string): Promise<Stor
   return token;
 }
 
-export async function signIn(): Promise<GoogleProfile> {
-  const token = await authorize(true);
+/**
+ * Đăng nhập (mở cửa sổ chọn tài khoản). Đã có vault của một tài khoản thì chỉ nhận lại đúng tài
+ * khoản đó (`expectedEmail`): chọn nhầm tài khoản khác sẽ đẩy secret của tài khoản cũ lên Drive
+ * của tài khoản mới. Muốn đổi tài khoản thì đăng xuất trước (xoá vault của extension).
+ */
+export async function signIn(expectedEmail?: string): Promise<GoogleProfile> {
+  const token = await authorize(true, expectedEmail);
   const response = await fetch(USERINFO_URL, {
     headers: { Authorization: `Bearer ${token.accessToken}` },
   });
@@ -128,8 +133,23 @@ export async function signIn(): Promise<GoogleProfile> {
     name: info.name ?? info.email ?? "",
     picture: info.picture ?? null,
   };
+  if (expectedEmail && profile.email.toLowerCase() !== expectedEmail.toLowerCase()) {
+    await chrome.storage.session.remove(TOKEN_KEY);
+    await revoke(token.accessToken);
+    throw new VaultError(
+      "GOOGLE_WRONG_ACCOUNT",
+      `Extension đang đồng bộ với ${expectedEmail}. Hãy chọn đúng tài khoản đó, hoặc Đăng xuất trước rồi mới đổi tài khoản.`,
+    );
+  }
   await chrome.storage.local.set({ [PROFILE_KEY]: profile });
   return profile;
+}
+
+async function revoke(accessToken: string): Promise<void> {
+  // Lỗi mạng thì bỏ qua (token tự hết hạn sau 1 giờ).
+  await fetch(`${REVOKE_URL}?token=${encodeURIComponent(accessToken)}`, { method: "POST" }).catch(
+    () => undefined,
+  );
 }
 
 export async function signOut(): Promise<void> {
@@ -137,12 +157,7 @@ export async function signOut(): Promise<void> {
   const token = stored[TOKEN_KEY] as StoredToken | undefined;
   await chrome.storage.session.remove(TOKEN_KEY);
   await chrome.storage.local.remove(PROFILE_KEY);
-  if (token) {
-    // Thu hồi quyền; lỗi mạng thì bỏ qua (token tự hết hạn sau 1 giờ).
-    await fetch(`${REVOKE_URL}?token=${encodeURIComponent(token.accessToken)}`, {
-      method: "POST",
-    }).catch(() => undefined);
-  }
+  if (token) await revoke(token.accessToken);
 }
 
 async function accessToken(): Promise<string> {
@@ -246,20 +261,36 @@ export async function uploadBackup(text: string, expected: string | null): Promi
       "Bản sao lưu trên Drive vừa được máy khác cập nhật. Hãy đồng bộ lại.",
     );
   }
-  let id = current?.id;
-  if (!id) {
-    const folder = await ensureFolder();
-    const response = await drive(`${DRIVE_FILES_URL}?fields=id`, {
-      method: "POST",
+  let response: Response;
+  if (current) {
+    response = await drive(`${DRIVE_UPLOAD_URL}/${current.id}?uploadType=media&fields=id,modifiedTime`, {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: BACKUP_NAME, parents: [folder.id], mimeType: "application/json" }),
+      body: text,
     });
-    id = ((await response.json()) as DriveFile).id;
+  } else {
+    // Tạo file kèm nội dung trong một request (multipart): tạo rồi mới ghi nội dung bằng request
+    // thứ hai thì lỗi giữa chừng sẽ để lại file rỗng trên Drive.
+    const folder = await ensureFolder();
+    const boundary = `authenticator-${crypto.randomUUID()}`;
+    const metadata = { name: BACKUP_NAME, parents: [folder.id], mimeType: "application/json" };
+    const crlf = "\r\n";
+    const body = [
+      `--${boundary}`,
+      "Content-Type: application/json; charset=UTF-8",
+      "",
+      JSON.stringify(metadata),
+      `--${boundary}`,
+      "Content-Type: application/json",
+      "",
+      text,
+      `--${boundary}--`,
+    ].join(crlf);
+    response = await drive(`${DRIVE_UPLOAD_URL}?uploadType=multipart&fields=id,modifiedTime`, {
+      method: "POST",
+      headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+      body,
+    });
   }
-  const response = await drive(`${DRIVE_UPLOAD_URL}/${id}?uploadType=media&fields=id,modifiedTime`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: text,
-  });
   return ((await response.json()) as DriveFile).modifiedTime ?? "";
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { type CodeEntry, describeImport, errorMessage, type ImportResult } from "@auth/core";
 import { CodeList, Icon, SearchBox, useCodes } from "@auth/ui";
 import { fillCode, scanQrOnPage } from "./page";
@@ -11,14 +11,20 @@ interface Props {
   /** Thêm tài khoản từ các link otpauth đọc được trên trang. */
   add: (uris: string) => Promise<ImportResult>;
   emptyText: string;
+  /** Đổi giá trị để tải lại danh sách (sau khi đồng bộ) mà giữ nguyên ô tìm kiếm, thông báo. */
+  reloadKey?: number;
 }
 
 /** Danh sách mã: tìm kiếm, điền mã vào trang, quét QR trên trang để thêm tài khoản. */
-export function Codes({ list, add, emptyText }: Props) {
+export function Codes({ list, add, emptyText, reloadKey = 0 }: Props) {
   const { entries, error, loading, now, refresh } = useCodes(list);
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState<Notice>(null);
   const [scanning, setScanning] = useState(false);
+
+  useEffect(() => {
+    if (reloadKey > 0) void refresh();
+  }, [reloadKey, refresh]);
 
   const fill = async (code: string) => {
     try {

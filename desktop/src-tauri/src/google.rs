@@ -436,34 +436,38 @@ impl Google {
                 "Bản sao lưu trên Drive vừa được máy khác cập nhật. Hãy bấm Đồng bộ lại để gộp cả thay đổi đó.",
             ));
         }
-        let id = match current {
-            Some(file) => file.id,
-            None => {
-                let folder = self.ensure_folder(&token).await?;
-                let response = self
-                    .http
-                    .post(DRIVE_FILES_URL)
+        const FIELDS: &str = "id,modifiedTime,size,webViewLink";
+        let response = match current {
+            Some(file) => {
+                self.http
+                    .patch(format!("{DRIVE_UPLOAD_URL}/{}", file.id))
                     .bearer_auth(&token)
-                    .query(&[("fields", "id")])
-                    .json(&json!({
-                        "name": BACKUP_NAME,
-                        "parents": [folder.id],
-                        "mimeType": "application/json",
-                    }))
+                    .query(&[("uploadType", "media"), ("fields", FIELDS)])
+                    .header(reqwest::header::CONTENT_TYPE, "application/json")
+                    .body(bytes)
                     .send()
-                    .await?;
-                read_json::<DriveFile>(response).await?.id
+                    .await?
+            }
+            None => {
+                // Tạo file kèm nội dung trong một request (multipart): tạo rồi mới ghi nội dung
+                // bằng request thứ hai thì lỗi giữa chừng sẽ để lại file rỗng trên Drive.
+                let folder = self.ensure_folder(&token).await?;
+                let metadata = json!({
+                    "name": BACKUP_NAME,
+                    "parents": [folder.id],
+                    "mimeType": "application/json",
+                });
+                let (content_type, body) = multipart_related(&metadata, &bytes);
+                self.http
+                    .post(DRIVE_UPLOAD_URL)
+                    .bearer_auth(&token)
+                    .query(&[("uploadType", "multipart"), ("fields", FIELDS)])
+                    .header(reqwest::header::CONTENT_TYPE, content_type)
+                    .body(body)
+                    .send()
+                    .await?
             }
         };
-        let response = self
-            .http
-            .patch(format!("{DRIVE_UPLOAD_URL}/{id}"))
-            .bearer_auth(&token)
-            .query(&[("uploadType", "media"), ("fields", "id,modifiedTime,size,webViewLink")])
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(bytes)
-            .send()
-            .await?;
         let file: DriveFile = read_json(response).await?;
         Ok(BackupInfo::from_file(Some(file)).expect("có file"))
     }
@@ -486,6 +490,20 @@ fn unwrap_refresh_token(account: &StoredAccount) -> AppResult<String> {
 /// Hết hạn sớm 60 giây để không dùng token sát giờ hết hạn.
 fn expiry(expires_in: u64) -> Instant {
     Instant::now() + Duration::from_secs(expires_in.saturating_sub(60))
+}
+
+/// Body `multipart/related` của Drive API: phần đầu là metadata JSON, phần sau là nội dung file.
+/// Trả về (Content-Type, body).
+fn multipart_related(metadata: &serde_json::Value, content: &[u8]) -> (String, Vec<u8>) {
+    let boundary = format!("authenticator-{}", random_token(16));
+    let mut body = format!(
+        "--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{metadata}\r\n\
+         --{boundary}\r\nContent-Type: application/json\r\n\r\n"
+    )
+    .into_bytes();
+    body.extend_from_slice(content);
+    body.extend_from_slice(format!("\r\n--{boundary}--").as_bytes());
+    (format!("multipart/related; boundary={boundary}"), body)
 }
 
 fn random_token(bytes: usize) -> String {
@@ -651,6 +669,20 @@ mod tests {
         let flat = serde_json::from_str::<ConfigFile>(r#"{"client_id":"x"}"#).unwrap().into_config();
         assert_eq!(flat.client_id, "x");
         assert_eq!(flat.client_secret, "");
+    }
+
+    #[test]
+    fn builds_multipart_upload() {
+        let (content_type, body) = multipart_related(&json!({"name": "vault-backup.json"}), b"{\"a\":1}");
+        let boundary = content_type.strip_prefix("multipart/related; boundary=").unwrap();
+        let body = String::from_utf8(body).unwrap();
+        assert_eq!(
+            body,
+            format!(
+                "--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{{\"name\":\"vault-backup.json\"}}\r\n\
+                 --{boundary}\r\nContent-Type: application/json\r\n\r\n{{\"a\":1}}\r\n--{boundary}--"
+            )
+        );
     }
 
     #[test]
